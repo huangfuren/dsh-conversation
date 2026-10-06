@@ -2706,14 +2706,12 @@ window.__ModuleLoader__.load({
 				}
 				const store = createChromeStore();
 
-				ctx.slots.inject("conversation.session.header.actions", () => {
-					ctx.slots.register({
-						name: "conversation.session.header.actions",
-						id: "dsh-conversation",
-						order: 100,
-						label: "大纲",
-					}, (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store })));
-				});
+				ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
+					name: "conversation.session.header.actions",
+					id: "dsh-conversation",
+					order: 100,
+					label: "大纲",
+				}, (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }))));
 			} catch (err) {
 				console.warn("[conversation] init failed; panel disabled: " + (err && err.message ? err.message : err));
 			}
