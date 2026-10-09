@@ -40,7 +40,7 @@ cordis.patch.yml    dsh bundle 声明
 
 ## 用户可见行为变化 → 双语文档同步
 
-任何用户可见的行为变化，必须同时更新 `README.md` 与 `README.zh-CN.md`，并在 `CHANGELOG.md`
+任何用户可见的行为变化，必须同时更新 `README.md`（中文）与 `README.en.md`（英文），并在 `CHANGELOG.md`
 里写清**之前的行为 vs 现在的行为**（只写结论不算）。这是 PR 的准入条件，不是可选项。
 
 ## 测试要求

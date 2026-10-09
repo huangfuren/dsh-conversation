@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **文档：README 默认语言改为中文。** 语言约定统一为 `README.md`（中文，默认入口）+
+  `README.en.md`（英文），两版顶部互链；`README.zh-CN.md` 已并入 `README.md`
+  （内容不变，仅文件名与默认入口调整）。`CONTRIBUTING.md` 的同步要求随之更新，
+  `files` 改为分发 `README.en.md`。
+
 ## [1.3.1] - 2026-09-21
 
 ### Added
