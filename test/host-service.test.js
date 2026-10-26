@@ -54,25 +54,35 @@ function makeDomStub() {
   return { window, document, navigator: { language: 'en-US', languages: ['en-US'] } }
 }
 
-/** 记录 hook 调用序列、useMemo 按 deps 跳过回调的最小 React 桩。 */
+/** 记录 hook 调用序列、useMemo 按 deps 跳过回调的最小 React 桩。
+ *  mark 里带 `@cursor#depth`：depth 用于把「槽位组件自己的 hook」和子组件 hook 分开。 */
 function makeRecordingReact() {
   const slots = []
   const api = {
     cursor: 0,
+    depth: 0,
     marks: [],
-    resetRender() { api.cursor = 0; api.marks = [] },
-    mark(tag) { api.marks.push(`${tag}@${api.cursor}`) },
+    resetRender() { api.cursor = 0; api.depth = 0; api.marks = [] },
+    mark(tag) { api.marks.push(`${tag}@${api.cursor}#${api.depth}`) },
     React: null,
   }
   api.React = {
     createElement(type, props, ...children) {
       if (typeof type === 'function') {
-        // 类组件（PanelBoundary）在最小渲染器里按实例 render() 展开；函数组件照旧调用。
-        if (type.prototype && typeof type.prototype.render === 'function') {
-          const instance = new type({ ...(props ?? {}), children })
-          return instance.render()
+        const name = type.name || 'anonymous'
+        api.mark(`enter:${name}`)
+        api.depth += 1
+        try {
+          // 类组件（PanelBoundary）在最小渲染器里按实例 render() 展开；函数组件照旧调用。
+          if (type.prototype && typeof type.prototype.render === 'function') {
+            const instance = new type({ ...(props ?? {}), children })
+            return instance.render()
+          }
+          return type(props ?? {})
+        } finally {
+          api.depth -= 1
+          api.mark(`leave:${name}`)
         }
-        return type(props ?? {})
       }
       return { type, props: props ?? {}, children }
     },
@@ -221,6 +231,40 @@ function mountViaApply(api, host) {
   return component
 }
 
+/** 只返回槽位组件自己的 hook（depth 1），排除子组件（占位/面板）的 hook。 */
+function ownHooks(marks, name) {
+  // 标记形如 `enter:Name@cursor#depth`，所以只能按前缀匹配。
+  const enter = marks.findIndex((mark) => mark.startsWith(`enter:${name}@`))
+  let leave = -1
+  for (let i = marks.length - 1; i >= 0; i--) {
+    if (marks[i].startsWith(`leave:${name}@`)) { leave = i; break }
+  }
+  if (enter === -1 || leave === -1) return []
+  // 注册进 apply() 的组件是外面那层箭头函数，所以槽位组件的 depth 由 enter 标记自己推出来。
+  const depth = Number(marks[enter].split('#')[1]) + 1
+  return marks.slice(enter + 1, leave)
+    .filter((mark) => !mark.startsWith('enter:') && !mark.startsWith('leave:'))
+    .filter((mark) => mark.endsWith(`#${depth}`))
+}
+
+/** 服务还在、但当前会话绑定尚未出现的宿主（首屏刷新早期）。 */
+function makePendingHost() {
+  return {
+    read(name) {
+      if (name === 'uiSession') {
+        return { current: { getSnapshot: () => ({}), subscribe: () => () => {} } }
+      }
+      if (name === 'sessions') {
+        return {
+          list: { getSnapshot: () => ({ ids: [], byId: {} }), subscribe: () => () => {} },
+          binding: () => undefined,
+        }
+      }
+      return undefined
+    },
+  }
+}
+
 test('readHostService prefers the cordis reflect layer and never throws', () => {
   const { readHostService } = loadClient(makeRecordingReact().React).internals
   const reflected = { tag: 'reflected' }
@@ -340,7 +384,9 @@ test('absent or hostile host services degrade to the empty state instead of thro
   const hostileComponent = mountViaApply(api3, hostileHost)
   rec3.resetRender()
   const hostileText = collectText(hostileComponent({}), []).join('\n')
-  assert.ok(hostileText.includes('No outline yet'), 'a throwing snapshot source must render the empty state')
+  // 服务在、但快照读不出来 ⇒ 视为“未就绪”：先占位，超时后照常挂载空态（effect 在真实 React 里跑）。
+  assert.ok(hostileText.includes('Reading conversation…'),
+    'a throwing snapshot source must degrade to the placeholder, never throw')
 })
 
 test('slot props hooks still win when a host injects them', () => {
@@ -353,4 +399,40 @@ test('slot props hooks still win when a host injects them', () => {
   const tree = component({ useChat: () => makeChatSnapshot(propRows) })
   const text = collectText(tree, []).join('\n')
   assert.ok(text.includes('question from props'), 'props-provided snapshots keep precedence')
+})
+
+test('panelMountStateOf only defers mounting while the host service is waiting', () => {
+  const { panelMountStateOf } = loadClient(makeRecordingReact().React).internals
+  assert.equal(panelMountStateOf(undefined, false), 'mount', 'no host bridge: keep the legacy direct mount')
+  assert.equal(panelMountStateOf({ available: false, ready: false }, false), 'mount')
+  assert.equal(panelMountStateOf({ available: true, ready: false }, false), 'pending')
+  assert.equal(panelMountStateOf({ available: true, ready: false }, true), 'mount', 'timeout falls back to the empty panel')
+  assert.equal(panelMountStateOf({ available: true, ready: true }, false), 'mount')
+})
+
+test('pinned panel renders a placeholder (not the panel) until session data is ready', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  const component = mountViaApply(api, makePendingHost())
+  rec.resetRender()
+  const tree = component({})
+  const text = collectText(tree, []).join('\n')
+  assert.ok(text.includes('Reading conversation…'), 'the placeholder must explain why the panel is empty')
+  assert.ok(text.includes('Questions · Outline'), 'the always-on header button must render before data arrives')
+  assert.ok(!text.includes('No outline yet'), 'the panel component itself must not mount while pending')
+  const pending = tree.children?.[0]?.[1]
+  assert.equal(pending?.props?.['aria-busy'], 'true', 'the placeholder must be announced as busy')
+})
+
+test('the slot keeps the same hook sequence when data moves from pending to ready', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  rec.resetRender()
+  mountViaApply(api, makePendingHost())({})
+  const pending = ownHooks([...rec.marks], 'HistoryOutlineSlot')
+  rec.resetRender()
+  mountViaApply(api, makeHost())({})
+  const ready = ownHooks([...rec.marks], 'HistoryOutlineSlot')
+  assert.ok(pending.length > 0, 'the slot must have rendered hooks for a meaningful comparison')
+  assert.deepEqual(ready, pending, 'the mount gate must not add or remove hooks between readiness states')
 })

@@ -561,6 +561,31 @@ window.__ModuleLoader__.load({
         line-height: 1.6;
         color: var(--dsw-alias-label-caption, #adb2b8);
       }
+      /* ---- 首屏占位：会话数据就绪前只渲染外壳，不挂载面板组件 ---- */
+      .dsh-conv-panel-pending {
+        height: auto;
+        min-height: 96px;
+      }
+      .dsh-conv-pending-body {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 18px 16px;
+        color: var(--dsw-alias-label-tertiary, #65666b);
+        font-size: 13px;
+      }
+      .dsh-conv-pending-dot {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--dsw-alias-state-business-primary, #4176e6);
+        animation: dsh-conv-pending-pulse 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes dsh-conv-pending-pulse {
+        from { opacity: 0.3; }
+        to { opacity: 1; }
+      }
       .dsh-conv-footer {
         display: flex;
         gap: 8px;
@@ -832,6 +857,9 @@ window.__ModuleLoader__.load({
 		const MAX_USER_TEXT = 80;
 		const SEARCH_SCOPES = ["all", "query", "heading"];
 		const EXPORT_FILE_NAME = "dsh-conversation-outline.md";
+		// 首屏数据就绪的等待上限：超过它仍未拿到会话绑定就照常挂载（空态），
+		// 避免宿主某版本不再 retain 会话时面板永远停在占位。
+		const PANEL_READY_TIMEOUT_MS = 2000;
 
 		const ZH = {
 			"panel.title": "历史提问 · 大纲",
@@ -839,6 +867,7 @@ window.__ModuleLoader__.load({
 			"panel.github": "在 GitHub 上查看",
 			"panel.empty": "暂无大纲内容",
 			"panel.emptyHint": "发送一条消息，或等待助手回复中出现标题",
+			"panel.pending": "正在读取会话…",
 			"panel.viewPanel": "紧凑宽度",
 			"panel.viewWide": "加宽面板",
 			"panel.viewFull": "全屏展开",
@@ -884,6 +913,7 @@ window.__ModuleLoader__.load({
 			"panel.github": "View on GitHub",
 			"panel.empty": "No outline yet",
 			"panel.emptyHint": "Send a message, or wait for headings in the assistant reply",
+			"panel.pending": "Reading conversation…",
 			"panel.viewPanel": "Compact width",
 			"panel.viewWide": "Wide panel",
 			"panel.viewFull": "Full height",
@@ -2478,7 +2508,11 @@ window.__ModuleLoader__.load({
 			const nodes = useMemo(() => safeNodesOf(chatSnapshot), [chatSnapshot]);
 			const snapshot = chatSnapshot !== null && typeof chatSnapshot === "object" ? chatSnapshot : null;
 			return {
-				available: uiSession !== undefined || sessionsService !== undefined,
+				// available 只看"真的能读"的源：宿主把服务对象给成空壳（如 ctx.sessions = {}）
+				// 时不能让闸门误判为"服务可用但未就绪"，否则旧宿主/测试会被卡在占位。
+				available: currentSource !== null || listSource !== null
+					|| (sessionsService !== null && sessionsService !== undefined
+						&& typeof sessionsService.binding === "function"),
 				ready: sessionId !== undefined,
 				sessionId,
 				session,
@@ -2489,6 +2523,18 @@ window.__ModuleLoader__.load({
 				hasMore: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.hasMore === true,
 				loadingOlder: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.loadingOlder === true,
 			};
+		}
+
+		/**
+		 * 首屏挂载闸门：数据未就绪时先渲染占位，就绪后再挂载面板组件。
+		 * - 宿主服务不可用（旧宿主 / 测试桩）⇒ 无法判断就绪，保持 1.3.1 的直接挂载；
+		 * - 服务可用但还没有会话绑定 ⇒ pending（除非等待超时）；
+		 * - 有会话绑定 ⇒ mount（此时 chat 快照可能仍是空数组，面板展示空态）。
+		 */
+		function panelMountStateOf(hostSession, timedOut) {
+			if (hostSession === null || hostSession === undefined || hostSession.available !== true) return "mount";
+			if (hostSession.ready === true) return "mount";
+			return timedOut === true ? "mount" : "pending";
 		}
 
 		/**
@@ -3179,9 +3225,37 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 首屏占位（pinned 且会话数据未就绪）：与面板同位置、同外壳，
+		 * 但不挂载 HistoryOutlinePanelInner —— 刷新时数据到达前不进入面板的 hook/订阅路径。
+		 */
+		function HistoryOutlinePlaceholder(props) {
+			const safeProps = props === undefined || props === null ? {} : props;
+			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
+			const side = safeProps.side === "left" ? "left" : "right";
+			const style = side === "left"
+				? { width: VIEW_SIZES.panel.width, left: 16, top: 72, right: "auto" }
+				: { width: VIEW_SIZES.panel.width, right: 16, top: 72, left: "auto" };
+			return h("div", {
+				className: "dsh-conv-panel dsh-conv-panel-pending",
+				style,
+				role: "status",
+				"aria-live": "polite",
+				"aria-busy": "true",
+				"aria-label": t("panel.title"),
+			},
+				h("div", { className: "dsh-conv-header" },
+					h("span", { className: "dsh-conv-headerglyph" }, h(OutlineGlyph)),
+					h("span", { className: "dsh-conv-title" }, t("panel.title"))),
+				h("div", { className: "dsh-conv-pending-body" },
+					h("span", { className: "dsh-conv-pending-dot" }),
+					h("span", null, t("panel.pending"))));
+		}
+
+		/**
 		 * 槽位标准组件：挂载在 conversation.session.header.actions 槽位。
 		 * 1. 无论面板开闭，Header 工具栏中永远渲染一个稳固的「大纲」操作按钮，绝不会消失！
-		 * 2. pinned === true 时，同级挂载悬浮大纲面板。
+		 * 2. pinned === true 且会话数据就绪后，同级挂载悬浮大纲面板；
+		 *    数据未就绪时先渲染占位（见 panelMountStateOf），就绪后再挂载。
 		 * 3. pinned === false 且 rail === true 时，同级挂载右边缘刻度滑轨。
 		 */
 		function HistoryOutlineSlot(props) {
@@ -3206,6 +3280,17 @@ window.__ModuleLoader__.load({
 				typeof safeProps.sessionId,
 			].join("|");
 
+			// 首屏闸门用到的 hook 全部无条件调用（与宿主服务是否就绪无关）。
+			const hostSession = useHostSession(safeProps.host);
+			const [timedOut, setTimedOut] = useState(false);
+			useEffect(() => {
+				if (hostSession.available !== true || hostSession.ready === true || timedOut === true) return undefined;
+				const timer = window.setTimeout(() => setTimedOut(true), PANEL_READY_TIMEOUT_MS);
+				return () => window.clearTimeout(timer);
+			}, [hostSession.available, hostSession.ready, timedOut]);
+			const mountPanel = panelMountStateOf(hostSession, timedOut) === "mount";
+			const dockSide = loadDockSide();
+
 			return h(Fragment, null, [
 				h("button", {
 					key: "conv-header-btn",
@@ -3217,7 +3302,11 @@ window.__ModuleLoader__.load({
 					onClick: () => store.set({ pinned: !pinned }),
 				}, h(OutlineGlyph), h("span", { style: { marginLeft: 4 } }, t("panel.title"))),
 
-				pinned && !DIAG_NO_PANEL ? h(PanelBoundary, { key: hookShape }, h(HistoryOutlinePanelInner, safeProps)) : null,
+				pinned && !DIAG_NO_PANEL
+					? (mountPanel
+						? h(PanelBoundary, { key: hookShape }, h(HistoryOutlinePanelInner, safeProps))
+						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide }))
+					: null,
 			]);
 		}
 
@@ -3346,7 +3435,10 @@ window.__ModuleLoader__.load({
 			conversationNodesOf,
 			normalizeOpacity,
 			resolveSlotChannel,
+			HistoryOutlinePanelInner,
 			HistoryOutlineSlot,
+			HistoryOutlinePlaceholder,
+			panelMountStateOf,
 			readHostService,
 			createHostBridge,
 			mainSessionIdOf,

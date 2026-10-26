@@ -25,6 +25,7 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 - **Keyboard** — with the panel focused, `Alt+↓` / `Alt+↑` move to the next / previous node; the listener is scoped to the panel and never steals host shortcuts.
 - **Reading position memory** — each session remembers the outline node you last looked at, and the panel lands there when you come back.
 - **Empty state** — "No outline content yet" until the session has questions or headings.
+- **First-paint placeholder** — after a reload, while the host's session / chat data is not ready yet, the panel position shows "Reading conversation…" and the panel component mounts only once data is ready (no more empty-state flash). If the host still has no session binding after 2 seconds, the panel mounts anyway and shows the empty state.
 - Persisted state: `pinned` / drag position / view tier / rail toggle / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
 
 ## How it works

@@ -60,6 +60,19 @@
     `useSession: 42`、`sessions.binding` 非函数）、缺失服务、读取即抛错的服务都只渲染空态不抛错；
     并锁定「props hook 存在时仍以 props 为准」的优先级。
 
+- **首屏数据未就绪时先渲染占位，就绪后再挂载面板组件。**
+  - 之前的行为：只要 `pinned` 为真（存储键缺失时默认 `true`），`HistoryOutlineSlot` 立即挂载
+    `HistoryOutlinePanelInner`。页面刷新时会话 / chat 数据尚未水合，面板先以空数据走完第一轮 hook 与
+    `useSyncExternalStore` 订阅，再由自身 effect 的 `bump()` 触发第二轮渲染 —— 这既是 1.3.1 崩溃的触发
+    窗口，也表现为「刷新时面板先空一下再出内容」的闪动。
+  - 现在的行为：槽位组件先用服务路径判断会话绑定是否就绪（`panelMountStateOf`）。未就绪时只渲染同位置
+    的占位外壳（「正在读取会话…」，`role="status"` + `aria-busy="true"`），就绪后才挂载面板组件；最长
+    等 2 秒（`PANEL_READY_TIMEOUT_MS`），超时仍照常挂载并展示空态，避免宿主某版本不再 retain 会话时
+    永远停在占位。宿主没有提供服务（旧宿主 / 独立渲染）时保持 1.3.1 的直接挂载。
+  - 回归判据：`test/host-service.test.js` 新增 3 条 —— `panelMountStateOf` 的状态矩阵（无服务 / 未就绪 /
+    超时 / 就绪）；未就绪时只出现占位、不出现面板空态；从未就绪切到就绪时槽位组件**自身**的 hook 序列
+    不变（断言里按 depth 把子组件 hook 排除）。
+
 ### Changed
 
 - **文档：README 默认语言改为中文。** 语言约定统一为 `README.md`（中文，默认入口）+
