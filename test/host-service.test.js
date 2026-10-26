@@ -62,7 +62,14 @@ function makeRecordingReact() {
     cursor: 0,
     depth: 0,
     marks: [],
+    runEffects: false,
+    cleanups: [],
     resetRender() { api.cursor = 0; api.depth = 0; api.marks = [] },
+    flushCleanups() {
+      for (const cleanup of api.cleanups.splice(0)) {
+        try { cleanup() } catch (_) { /* 清理失败不影响断言 */ }
+      }
+    },
     mark(tag) { api.marks.push(`${tag}@${api.cursor}#${api.depth}`) },
     React: null,
   }
@@ -111,7 +118,15 @@ function makeRecordingReact() {
       api.cursor += 1
       return slot
     },
-    useEffect() { api.mark('useEffect'); api.cursor += 1 },
+    useEffect(fn) {
+      api.mark('useEffect')
+      api.cursor += 1
+      // 诊断日志在 effect 里；默认不执行（保持既有测试的纯渲染语义），需要时由测试打开。
+      if (api.runEffects === true && typeof fn === 'function') {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') api.cleanups.push(cleanup)
+      }
+    },
     useCallback(fn) { api.mark('useCallback'); api.cursor += 1; return fn },
     useMemo(fn, deps) {
       const myIndex = api.cursor
@@ -134,12 +149,12 @@ function makeRecordingReact() {
   return api
 }
 
-function loadClient(React) {
+function loadClient(React, consoleFace) {
   const src = fs.readFileSync(CLIENT, 'utf8')
   const dom = makeDomStub()
   let registered = null
   dom.window.__ModuleLoader__ = { load: (mod) => { registered = mod } }
-  const quietConsole = { log() {}, info() {}, warn() {}, error() {} }
+  const quietConsole = consoleFace ?? { log() {}, info() {}, warn() {}, error() {} }
   const factory = new Function('window', 'document', 'navigator', 'localStorage', 'console', src)
   factory(dom.window, dom.document, dom.navigator, makeLocalStorage(), quietConsole)
   assert.ok(registered, 'client.js must register itself via window.__ModuleLoader__.load')
@@ -435,4 +450,32 @@ test('the slot keeps the same hook sequence when data moves from pending to read
   const ready = ownHooks([...rec.marks], 'HistoryOutlineSlot')
   assert.ok(pending.length > 0, 'the slot must have rendered hooks for a meaningful comparison')
   assert.deepEqual(ready, pending, 'the mount gate must not add or remove hooks between readiness states')
+})
+
+test('the rendered panel logs the raw snapshot contract and probes the DOM contract exactly once', () => {
+  const logs = []
+  const capture = {
+    log() {},
+    info: (...args) => logs.push(args.map(String).join(' ')),
+    warn: (...args) => logs.push(args.map(String).join(' ')),
+    error() {},
+  }
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React, capture)
+  const component = mountViaApply(api, makeHost())
+  rec.runEffects = true
+
+  rec.resetRender()
+  component({})
+  const shapeLines = logs.filter((line) => line.includes('session snapshot shape:'))
+  assert.equal(shapeLines.length, 1, `expected exactly one shape log, got: ${shapeLines.join(' | ')}`)
+  // 报的必须是宿主给的原始形状（legacy.nodes），不是归一后的数组。
+  assert.ok(shapeLines[0].includes('legacy.nodes (2 rows)'), shapeLines[0])
+  assert.equal(logs.filter((line) => line.includes('DOM contract')).length, 1)
+
+  rec.resetRender()
+  component({})
+  assert.equal(logs.filter((line) => line.includes('session snapshot shape:')).length, 1, 'shape log is one-shot')
+  assert.equal(logs.filter((line) => line.includes('DOM contract')).length, 1, 'DOM log is one-shot')
+  rec.flushCleanups()
 })

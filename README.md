@@ -51,6 +51,8 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 
 - **快照契约双支持**：新结构 `snapshot.nodes[]` + `snapshot.partial`；旧结构 `snapshot.chat.{order, nodes(Map)}` + `node.data.content`。结构不符时返回空列表而不是抛错。
 - **槽位数据源加固**：`conversation.session.header.actions` 的 owner props 可能为空（dsh 0.2.0-rc.2 即以 `renderSlot(..., {})` 渲染），第三方 header（如 `dsh-better-sidebar`）接管 header 区时 props 形状也可能不同。面板优先用 slot props 注入的 hook，缺失时改读 `uiSession.current` 的 `hooks.chat` / `hooks.session`；两条路都拿不到就渲染空态，不会让槽位崩溃。
+- **宿主 API 降级**：`slots` / `sessions` / `uiSession` 的形状、store 的 `getSnapshot` / `subscribe` 都逐层探测并吞掉异常；任一改名或缺失只让本面板降级为空态，不会拖垮同槽位的其它插件。
+- **一次性兼容性诊断**：首次拿到有内容的快照时用一条 `console.info` 记录实际结构（`legacy.nodes` / `nodes` / `chat.order` …）与行数；结构无法识别时 `console.warn` 列出实际键名。首次渲染出大纲时探测 DOM 契约（`data-conversation-scroll` / `data-chat-flow-kind` / 锚点属性），缺失或改名时 `console.warn` 说明已降级为「按文本顺序匹配」。两类日志每次页面加载最多各一条，不改变任何容错行为。
 - **宿主 API 降级**：`slots` / `sessions` 的形状、face 的 `getSnapshot` / `subscribe` 都逐层探测；任一改名或缺失只让本面板消失，不会拖垮同槽位的其它插件。
 - **注册通道三层兜底**：槽位声明可能晚于插件装载，首次 `slots.register` 会抛 `slot "…" is not declared`（0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 三版都会这样抛）。因此按宿主实际能力选通道：① `slots.inject` 存在 → 沿用宿主契约；② 否则 `slots.subscribeDeclaration` 存在 → 订阅声明事件后注册，槽位塌缩重建也能自动恢复；③ 都没有 → 立即尝试 + 700ms 退避重试（≤12 次）。`inject` 消失不再导致面板整块消失。重复注册由 `declarationEpoch` 把关，避免同 id 触发 `already has an entry`。
 - **样式能力探测**：背景透明度依赖 CSS `color-mix`（Chromium 111+）。宿主不支持时该行不渲染、面板保持完全不透明，不会留下「拖了没反应」的死控件。
@@ -124,7 +126,7 @@ npm run verify   # check + test（已绑定 prepack，测试不过打不出包�
 
 ## 已知限制
 
-- 点击定位依赖宿主的 DOM 契约（`data-chat-anchor-key` 或 `data-chat-flow-kind`）；若未来整体改属性，需在 `locateByKey` / `collectUserRows` 里追加新候选。
+- 点击定位依赖宿主的 DOM 契约（`data-chat-anchor-key` / `data-message-key` / `data-node-key` 或 `data-chat-flow-kind`）；若未来整体改属性，需在 `locateByKey` / `collectUserRows` 里追加新候选——插件会在首次渲染出大纲时探测一次，缺失时打一条 `console.warn`（见「兼容性 / 一次性兼容性诊断」）。
 - 服务路径跟随宿主「主视图」绑定的会话（`uiSession.current`）：该槽位的 owner props 不带 `sessionId`，所以同页子会话（subagent）的 header 上，面板展示的仍是主会话大纲。若宿主将来在 props 里给 `sessionId`，会优先使用它。
 - 面板为 fixed 定位，与其它右上角悬浮插件共存时可能重叠，需各自错开 `top`；刻度条固定贴右缘居中，与自带的同类导航插件同时开启时会视觉重叠。
 - 「N 工具 / N 字」统计口径是快照里该轮之后的 tool 节点数与 assistant 正文字符数，宿主若改变节点 kind 命名会退化为不显示（不会报错）。

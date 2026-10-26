@@ -51,6 +51,8 @@ Client behaviour:
 
 - **Both snapshot contracts**: the new `snapshot.nodes[]` + `snapshot.partial`, and the legacy `snapshot.chat.{order, nodes(Map)}` + `node.data.content`. A shape mismatch yields an empty list, never an exception.
 - **Hardened slot data source**: the `conversation.session.header.actions` owner props can be empty (dsh 0.2.0-rc.2 renders the slot with `renderSlot(..., {})`), and a third-party header such as `dsh-better-sidebar` may pass a different shape entirely. The panel prefers hooks injected through slot props and falls back to `uiSession.current` → `hooks.chat` / `hooks.session`; when neither path has data it renders the empty state instead of taking down the slot.
+- **Host API degradation**: the shapes of `slots` / `sessions` / `uiSession` and every store's `getSnapshot` / `subscribe` are probed layer by layer with exceptions swallowed; a rename or removal only degrades this panel to its empty state, it never takes down other plugins in the same slot.
+- **One-shot compatibility diagnostics**: the first non-empty snapshot logs one `console.info` line with the actual structure (`legacy.nodes` / `nodes` / `chat.order` …) and row count; an unrecognised structure logs one `console.warn` naming the keys it saw. The first rendered outline probes the host DOM contract (`data-conversation-scroll` / `data-chat-flow-kind` / anchor attributes) and logs one `console.warn` when an attribute is missing or renamed, stating that exact-anchor jumps degraded to text-order matching. Both logs fire at most once per page load and change no fallback behaviour.
 - **Host API degradation**: the shapes of `slots` / `sessions` and the face's `getSnapshot` / `subscribe` are probed layer by layer; a rename or removal only makes this panel disappear, it never takes down other plugins in the same slot.
 - **Three-tier registration fallback**: the slot may be declared after the plugin loads, and the first `slots.register` throws `slot "…" is not declared` (0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 all throw it). The channel is therefore chosen from what the host actually exposes: ① `slots.inject` present → use the host contract; ② otherwise `slots.subscribeDeclaration` → subscribe to declaration events and register, which also recovers after a slot collapses and is re-declared; ③ neither → try immediately plus 700ms backoff (up to 12 attempts). Losing `inject` no longer makes the whole panel disappear. Duplicate registration is gated by `declarationEpoch`, so the same id never triggers `already has an entry`.
 - **Style capability probing**: background opacity relies on CSS `color-mix` (Chromium 111+). Where it is unsupported that row is not rendered and the panel stays fully opaque, instead of leaving a slider that does nothing.
@@ -124,8 +126,10 @@ the snapshot-shape matrix, and the "at most one line per page load" rule for bot
 
 ## Known limitations
 
-- Click-to-locate depends on the host's DOM contract (`data-chat-anchor-key` or `data-chat-flow-kind`);
-  if those attributes are renamed wholesale, new candidates must be added in `locateByKey` / `collectUserRows`.
+- Click-to-locate depends on the host's DOM contract (`data-chat-anchor-key` / `data-message-key` / `data-node-key`
+  or `data-chat-flow-kind`); if those attributes are renamed wholesale, new candidates must be added in
+  `locateByKey` / `collectUserRows`. The plugin probes the contract once after the first rendered outline and logs
+  a single `console.warn` when something is missing (see "One-shot compatibility diagnostics").
 - The service path follows the host's "main view" binding (`uiSession.current`): the slot's owner props carry no
   `sessionId`, so on a subagent session header the panel still shows the main session's outline. A `sessionId`
   supplied through props, if the host ever adds one, takes precedence.
