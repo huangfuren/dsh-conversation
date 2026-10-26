@@ -43,6 +43,23 @@
   `state.tree` / `state.visible` 统一按数组兜底，错误边界改为静默降级 + 退避重试（≤5 次）；
   面板首帧即可稳定出目录，不再依赖重挂载自愈。
 
+- **槽位 props 为空时不再「永远空态」：面板改从宿主服务（`sessions` / `uiSession`）取当前会话快照。**
+  - 之前的行为：面板只从 slot props 的 `useChat` / `useSession` / `useSessions` 取数据。宿主在
+    `conversation.session.header.actions` 上以 `renderSlot(..., {})` 渲染（dsh 0.2.0-rc.2 的
+    `dsh-client-ui-conversation/lib/client.js:16502`），owner props 为空；第三方 header（如
+    `dsh-better-sidebar`）接管 header 区时 props 形状也可能不同 ⇒ 三条 hook 全缺席时面板永远停在
+    「暂无大纲内容」，而顶部「大纲」按钮看起来一切正常，用户没有任何可排查的线索。
+  - 现在的行为：`apply()` 把 cordis 的 `sessions` / `uiSession` 服务捕获进插件私有的 host bridge
+    （经 `ctx.reflect.get(name, false)` 只读探测，缺失/抛错都降级为 `undefined`），槽位包装器把
+    `store` / `host` **最后**合并进 props。面板优先用 slot props 的 hook（旧宿主行为不变），缺失时读
+    `uiSession.current` 的 `hooks.chat`（ChatSnapshot）与 `hooks.session`（`hasMore` / `loadOlder`）；
+    两条路的结果都经 `conversationNodesOf` 归一 + `Array.isArray` 兜底。服务缺失或抛错时只渲染空态，
+    槽位按钮在任何情况下都保留。空 props 下的收藏 / 阅读位置也从 `default-session` 改为真实会话 id。
+  - 回归判据：新增 `test/host-service.test.js` —— 在 `renderSlot(..., {})` 形状的完全空 props 下渲染出
+    服务端快照里的提问与标题；同一 props 两轮渲染的 hook 序列一致；垃圾 props（`useChat: 'not-a-hook'`、
+    `useSession: 42`、`sessions.binding` 非函数）、缺失服务、读取即抛错的服务都只渲染空态不抛错；
+    并锁定「props hook 存在时仍以 props 为准」的优先级。
+
 ### Changed
 
 - **文档：README 默认语言改为中文。** 语言约定统一为 `README.md`（中文，默认入口）+

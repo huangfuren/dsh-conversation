@@ -36,9 +36,9 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 
 客户端半行为：
 
-1. 通过 `inject: ["slots", "sessions"]` 取两个必需服务；只有 `slots.register` 本身缺失才打警告并禁用面板。
-2. 在 `conversation.session.header.actions` 槽位注册 `dsh-conversation`（`order: 100`），并把 `store` / `sessions` 透传给面板，不依赖 face 注入。
-3. `sessions.binding(id)` 取当前会话 face，用 `useSyncExternalStore` 订阅 `getSnapshot()`。
+1. 通过 `inject: ["slots", "sessions"]` 取两个必需服务；只有 `slots.register` 本身缺失才打警告并禁用面板。`apply()` 同时把 `sessions` / `uiSession` 服务抓进插件私有的 host bridge。
+2. 在 `conversation.session.header.actions` 槽位注册 `dsh-conversation`（`order: 100`），把 `store` / `host` 合并在槽位 props 的最后 —— 宿主传空 props、或第三方 header 传另一套形状，都覆盖不掉它们；槽位声明晚到时有「注入 / 声明订阅 / 退避重试」三层通道（见「兼容性 / 注册通道三层兜底」）。
+3. 数据有两条路：slot props 的 `useChat` / `useSession` / `useSessions`（旧宿主 / 第三方 header 注入）优先；它们缺失时读 `uiSession.current` 的 `hooks.chat`（ChatSnapshot）与 `hooks.session`（`hasMore` / `loadOlder`）。两条路都经 `conversationNodesOf` 归一 + `Array.isArray` 兜底；都拿不到就是空态。`sessions.binding(id)` 仍用于旧回退与 loadOlder。
 4. `buildOutlineItems` 把快照摊平成大纲项：user/steering → level 0（同时统计该轮工具数与正文字数）；assistant 的 text block 按 ATX 标题（`^#{1,6}\s+`，跳过围栏代码块内的 `#`）→ level 1~6；流式中的 `partial` 标题实时出现并带呼吸动画；tool-call / context 等非正文节点只计数、不进大纲。
 5. `OutlineManager` 持有层级、搜索（含范围）、收藏状态并与 localStorage 同步；折树 / 折叠恢复 / 可见行压平 / 定位揭示都是纯函数。
 6. 点击定位：先用宿主内部锚点属性 `[data-chat-anchor-key]` → `[data-message-key]` → `[data-node-key]`，命不中再按 `data-chat-flow-kind` 顺序匹配 + 文本校验；始终找不到就提示「当前节点暂不可定位」，绝不静默错位滚动。
@@ -49,6 +49,7 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 ## 兼容性
 
 - **快照契约双支持**：新结构 `snapshot.nodes[]` + `snapshot.partial`；旧结构 `snapshot.chat.{order, nodes(Map)}` + `node.data.content`。结构不符时返回空列表而不是抛错。
+- **槽位数据源加固**：`conversation.session.header.actions` 的 owner props 可能为空（dsh 0.2.0-rc.2 即以 `renderSlot(..., {})` 渲染），第三方 header（如 `dsh-better-sidebar`）接管 header 区时 props 形状也可能不同。面板优先用 slot props 注入的 hook，缺失时改读 `uiSession.current` 的 `hooks.chat` / `hooks.session`；两条路都拿不到就渲染空态，不会让槽位崩溃。
 - **宿主 API 降级**：`slots` / `sessions` 的形状、face 的 `getSnapshot` / `subscribe` 都逐层探测；任一改名或缺失只让本面板消失，不会拖垮同槽位的其它插件。
 - **注册通道三层兜底**：槽位声明可能晚于插件装载，首次 `slots.register` 会抛 `slot "…" is not declared`（0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 三版都会这样抛）。因此按宿主实际能力选通道：① `slots.inject` 存在 → 沿用宿主契约；② 否则 `slots.subscribeDeclaration` 存在 → 订阅声明事件后注册，槽位塌缩重建也能自动恢复；③ 都没有 → 立即尝试 + 700ms 退避重试（≤12 次）。`inject` 消失不再导致面板整块消失。重复注册由 `declarationEpoch` 把关，避免同 id 触发 `already has an entry`。
 - **样式能力探测**：背景透明度依赖 CSS `color-mix`（Chromium 111+）。宿主不支持时该行不渲染、面板保持完全不透明，不会留下「拖了没反应」的死控件。
@@ -115,11 +116,15 @@ npm run verify   # check + test（已绑定 prepack，测试不过打不出包�
 `client.js` 不是 ES 模块：dsh 客户端模块加载器按 `window.__ModuleLoader__.load({ id, factory })` 加载它，
 `factory` 里的 `require` **只能解析宿主提供的外部模块**（本插件只用到 `react`），相对路径依赖在真实加载器里
 解析不了 —— 所以客户端保持自包含单文件（`dsh-grafana` 的 `client.js` 约 67 KB，同样如此）。
-`test/client.test.js` 用最小加载器桩把它 load 进来，断言它导出的纯函数 `internals`。
+`test/client.test.js` 用最小加载器桩把它 load 进来，断言它导出的纯函数 `internals`；
+`test/host-service.test.js` 驱动 `apply()` 注册出来的槽位组件，锁定「宿主 slot props 为空时从
+`uiSession` / `sessions` 服务取快照」以及服务缺失 / 恶意 props 的降级路径。
+`test/diagnostics.test.js` 锁定 DOM 契约探测矩阵、快照形状矩阵，以及两类一次性日志「每次页面加载最多一条」的约定。
 
 ## 已知限制
 
 - 点击定位依赖宿主的 DOM 契约（`data-chat-anchor-key` 或 `data-chat-flow-kind`）；若未来整体改属性，需在 `locateByKey` / `collectUserRows` 里追加新候选。
+- 服务路径跟随宿主「主视图」绑定的会话（`uiSession.current`）：该槽位的 owner props 不带 `sessionId`，所以同页子会话（subagent）的 header 上，面板展示的仍是主会话大纲。若宿主将来在 props 里给 `sessionId`，会优先使用它。
 - 面板为 fixed 定位，与其它右上角悬浮插件共存时可能重叠，需各自错开 `top`；刻度条固定贴右缘居中，与自带的同类导航插件同时开启时会视觉重叠。
 - 「N 工具 / N 字」统计口径是快照里该轮之后的 tool 节点数与 assistant 正文字符数，宿主若改变节点 kind 命名会退化为不显示（不会报错）。
 - 导出文件名固定为 `dsh-conversation-outline.md`，不做命名配置。

@@ -2265,6 +2265,233 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 快照归一后的数组兜底。宿主换快照形状、第三方 header 传自定义 props、或服务暂时
+		 * 不可用时，返回值都可能是 undefined / 非数组；UI 只接受数组。
+		 */
+		function safeNodesOf(snapshot) {
+			let rows;
+			try {
+				rows = conversationNodesOf(snapshot);
+			} catch (_) {
+				return [];
+			}
+			return Array.isArray(rows) ? rows : [];
+		}
+
+		/**
+		 * 只读宿主服务：优先走 cordis 反射层（`ctx.reflect.get(name, false)` —— 未提供时
+		 * 返回 undefined 而不是抛错），再退回属性访问。宿主改名 / 尚未就绪时返回 undefined，
+		 * 由 UI 降级为空态 —— 与 README/SECURITY 的「宿主 API 降级不拖垮同槽位」承诺一致。
+		 */
+		function readHostService(ctx, name) {
+			if (ctx === null || ctx === undefined) return undefined;
+			try {
+				const reflect = ctx.reflect;
+				if (reflect !== null && reflect !== undefined && typeof reflect.get === "function") {
+					const value = reflect.get(name, false);
+					if (value !== undefined && value !== null) return value;
+				}
+			} catch (_) { /* 反射层不可用：继续尝试属性访问 */ }
+			try {
+				const value = ctx[name];
+				return value === null ? undefined : value;
+			} catch (_) {
+				return undefined;
+			}
+		}
+
+		/**
+		 * 插件私有的宿主桥。apply() 时创建一次，随槽位 props 下发（包装器里最后合并，
+		 * 第三方 header 传什么 props 都覆盖不掉它）：
+		 * - slot props 里的 useChat / useSession / useSessions 在 0.2.0-rc.2 的
+		 *   `conversation.session.header.actions` 上可能全缺失，面板因此还有第二条数据路径：
+		 *   直接读 uiSession 服务里「主视图绑定」的 chat / session 源；
+		 * - 服务同样缺失（旧宿主 / 精简宿主）时退回 slot props 路径，行为与 1.3.1 一致。
+		 */
+		function createHostBridge(ctx) {
+			return {
+				read(name) {
+					return readHostService(ctx, name);
+				},
+			};
+		}
+
+		// uSES 的 fallback source 必须是模块级常量：服务缺席时 hook 形状仍与就绪时一致。
+		const NOOP_SUBSCRIBE = () => () => {};
+		const EMPTY_HOST_SNAPSHOT = Object.freeze({});
+		const EMPTY_HOST_SNAPSHOT_GET = () => EMPTY_HOST_SNAPSHOT;
+
+		/** 把一个 { getSnapshot, subscribe } 的宿主 store 包成 uSES 可直接使用的稳定 source。
+		 *  订阅/读取都吞掉异常：宿主 store 抛错时返回空快照，面板降级为空态而不是崩槽位。 */
+		function snapshotSourceOf(store) {
+			if (store === null || store === undefined || typeof store !== "object") return null;
+			if (typeof store.getSnapshot !== "function" || typeof store.subscribe !== "function") return null;
+			return {
+				subscribe: (listener) => {
+					try {
+						const off = store.subscribe(listener);
+						return typeof off === "function" ? off : NOOP_SUBSCRIBE();
+					} catch (_) {
+						return NOOP_SUBSCRIBE();
+					}
+				},
+				getSnapshot: () => {
+					try {
+						const value = store.getSnapshot();
+						return value === undefined ? EMPTY_HOST_SNAPSHOT : value;
+					} catch (_) {
+						return EMPTY_HOST_SNAPSHOT;
+					}
+				},
+			};
+		}
+
+		/** 从宿主桥读服务；bridge 自己抛错时按缺失处理（不向上冒泡）。 */
+		function hostServiceOf(host, name) {
+			if (host === null || host === undefined || typeof host.read !== "function") return undefined;
+			try {
+				return host.read(name);
+			} catch (_) {
+				return undefined;
+			}
+		}
+
+		/** 会话列表里「主视图正在使用」的会话（与宿主 ui-session 的 publishMain 同款判定）。 */
+		function mainSessionIdOf(sessionsService, listSnapshot) {
+			if (sessionsService === null || sessionsService === undefined) return undefined;
+			let list = listSnapshot;
+			if (list === null || list === undefined || typeof list !== "object") {
+				try {
+					const store = sessionsService.list;
+					list = store !== null && store !== undefined && typeof store.getSnapshot === "function"
+						? store.getSnapshot() : undefined;
+				} catch (_) {
+					list = undefined;
+				}
+			}
+			if (list === null || list === undefined || typeof list !== "object") return undefined;
+			const byId = list.byId !== null && typeof list.byId === "object" ? list.byId : {};
+			let best;
+			let bestRetained = 0;
+			for (const id of Object.keys(byId)) {
+				const row = byId[id];
+				const retained = row !== null && typeof row === "object"
+					&& row.retainedBy !== null && typeof row.retainedBy === "object"
+					? Number(row.retainedBy.mainView) || 0 : 0;
+				if (retained > bestRetained) {
+					best = id;
+					bestRetained = retained;
+				}
+			}
+			if (best !== undefined) return best;
+			if (typeof list.current === "string" && list.current.length > 0) return list.current;
+			const ids = Array.isArray(list.ids) ? list.ids : [];
+			return ids.length === 1 && typeof ids[0] === "string" ? ids[0] : undefined;
+		}
+
+		/**
+		 * slot props 路径的回退快照 selector（0.1.x 契约）：props 里带 sessions 服务时，
+		 * 用会话根的 current 找当前会话 face。纯函数，hook 已在组件顶层调用。
+		 */
+		function makeSessionBindingSelector(sessionsFace) {
+			return (root) => {
+				try {
+					if (root === null || root === undefined || typeof root !== "object") return null;
+					const id = typeof root.current === "string" ? root.current : undefined;
+					if (id === undefined || sessionsFace === null || sessionsFace === undefined
+						|| typeof sessionsFace.binding !== "function") return null;
+					const binding = sessionsFace.binding(id);
+					return binding !== null && binding !== undefined && binding.session
+						? binding.session.getSnapshot() : null;
+				} catch (_) {
+					return null;
+				}
+			};
+		}
+
+		/**
+		 * 服务路径的会话快照（不依赖 slot props）。每个 hook 都无条件调用：服务缺失时使用
+		 * 模块级 no-op source，因此 hook 顺序不随宿主能力 / 数据时序变化（1.3.1 崩溃的反面）。
+		 *
+		 * 数据来源（宿主 0.2.0-rc.2 的公开面）：
+		 * - `uiSession.current`：主视图绑定的 `{ key, hooks: { session, chat }, props }`；
+		 * - `hooks.chat`：ChatSnapshot（`legacy.nodes` / `partial`），即大纲数据；
+		 * - `hooks.session`：Session 对象（`hasMore` / `loadingOlder` / `loadOlder`）。
+		 * uiSession 缺席时退回 `sessions.list` + `sessions.binding(id).session`；这条退路没有
+		 * chat 源，因此只保证「不崩、不闪」，数据为空态而不是伪造。
+		 */
+		function useHostSession(host) {
+			const uiSession = hostServiceOf(host, "uiSession");
+			const sessionsService = hostServiceOf(host, "sessions");
+
+			const currentSource = useMemo(() => snapshotSourceOf(uiSession && uiSession.current), [uiSession]);
+			const binding = useSyncExternalStore(
+				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
+				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
+			);
+			const bindingKey = binding !== null && typeof binding === "object"
+				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
+
+			const listSource = useMemo(() => snapshotSourceOf(sessionsService && sessionsService.list), [sessionsService]);
+			const listSnapshot = useSyncExternalStore(
+				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
+				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
+			);
+			const listedSessionId = useMemo(() => mainSessionIdOf(sessionsService, listSnapshot), [sessionsService, listSnapshot]);
+			const sessionId = bindingKey === undefined ? listedSessionId : bindingKey;
+
+			const chatSource = useMemo(() => {
+				const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
+				return snapshotSourceOf(hooks && hooks.chat);
+			}, [binding]);
+			const chatSnapshot = useSyncExternalStore(
+				chatSource === null ? NOOP_SUBSCRIBE : chatSource.subscribe,
+				chatSource === null ? EMPTY_HOST_SNAPSHOT_GET : chatSource.getSnapshot,
+			);
+
+			const session = useMemo(() => {
+				try {
+					const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
+					const direct = hooks && hooks.session;
+					if (direct !== null && direct !== undefined && typeof direct.getSnapshot === "function"
+						&& typeof direct.subscribe === "function") {
+						return direct;
+					}
+					if (sessionId === undefined || sessionsService === null || sessionsService === undefined
+						|| typeof sessionsService.binding !== "function") return null;
+					const found = sessionsService.binding(sessionId);
+					const fallback = found && found.session;
+					return fallback !== null && fallback !== undefined
+						&& typeof fallback.getSnapshot === "function" && typeof fallback.subscribe === "function"
+						? fallback : null;
+				} catch (_) {
+					return null;
+				}
+			}, [binding, sessionId, sessionsService]);
+
+			const sessionSource = useMemo(() => snapshotSourceOf(session), [session]);
+			const sessionSnapshot = useSyncExternalStore(
+				sessionSource === null ? NOOP_SUBSCRIBE : sessionSource.subscribe,
+				sessionSource === null ? EMPTY_HOST_SNAPSHOT_GET : sessionSource.getSnapshot,
+			);
+
+			const nodes = useMemo(() => safeNodesOf(chatSnapshot), [chatSnapshot]);
+			const snapshot = chatSnapshot !== null && typeof chatSnapshot === "object" ? chatSnapshot : null;
+			return {
+				available: uiSession !== undefined || sessionsService !== undefined,
+				ready: sessionId !== undefined,
+				sessionId,
+				session,
+				sessions: sessionsService,
+				snapshot,
+				sessionSnapshot: sessionSnapshot !== null && typeof sessionSnapshot === "object" ? sessionSnapshot : null,
+				nodes,
+				hasMore: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.hasMore === true,
+				loadingOlder: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.loadingOlder === true,
+			};
+		}
+
+		/**
 		 * 无 hooks 的外壳：store 不可用时直接不渲染。
 		 * 放在这里而不是组件内部，是为了不在 hooks 之前做条件返回。
 		 */
@@ -2288,7 +2515,7 @@ window.__ModuleLoader__.load({
 			const chrome = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			stg("panel:after-chrome");
 
-			/* ===== 钩子布局钉死 =====
+			/* ===== 钩子布局钉死（main 008030c）=====
 			   无论宿主这次下发了哪几个 hook 工厂，本组件都固定调用 4 次：
 			   3 次取会话状态 + 1 次取对话节点；缺哪一路就换成等价占位钩子。
 			   （改造前按 props 形态条件调用，sessionId 从空变成字符串时少调一次，
@@ -2299,42 +2526,78 @@ window.__ModuleLoader__.load({
 				: (sessionSource === useNoSession ? useNoNodes : sessionSource);
 
 			stg("panel:before-hasMore");
-			const hasMore = sessionSource(SEL_HAS_MORE) === true;
+			const propHasMore = sessionSource(SEL_HAS_MORE) === true;
 			stg("panel:after-hasMore");
-			const loadingOlder = sessionSource(SEL_LOADING_OLDER) === true;
+			const propLoadingOlder = sessionSource(SEL_LOADING_OLDER) === true;
 			stg("panel:after-loadingOlder");
 			const boundSessionId = sessionSource(SEL_CURRENT_ID);
 			stg("panel:after-sessionsHook");
-			const hookNodes = nodesSource(conversationNodesOf) || EMPTY_NODES;
+			const hookNodes = safeNodesOf(nodesSource(conversationNodesOf)) || EMPTY_NODES;
 			stg("panel:after-hookNodes");
 
-			// 会话 id：优先用槽位直接下发的 sessionId，其次用 hook 选出来的当前会话
-			const sessionId = (typeof safeProps.sessionId === "string" && safeProps.sessionId.length > 0)
-				? safeProps.sessionId : "";
-			const currentId = sessionId !== "" ? sessionId
-				: (typeof boundSessionId === "string" && boundSessionId.length > 0 ? boundSessionId : "default-session");
+			/* 服务路径（PR#2 f228ac4，叠加在钉死布局之上）：
+			   0.2.x 的 header.actions owner props 可能为空；服务桥在 apply() 时捕获
+			   sessions / uiSession，这里无条件调用自己的 service hook（内部调用次数恒定），
+			   不改变上面钉死的 4 次宿主 hook。 */
+			const hostSession = useHostSession(safeProps.host);
+			const sessionsFace = (safeProps.sessions !== null && safeProps.sessions !== undefined
+				&& typeof safeProps.sessions.binding === "function") ? safeProps.sessions : hostSession.sessions;
 
+			// 会话 id：优先槽位直接下发，其次 hook 选出的当前会话，最后服务路径。
+			const propSessionId = typeof safeProps.sessionId === "string" && safeProps.sessionId.length > 0
+				? safeProps.sessionId : undefined;
+			const sessionId = propSessionId !== undefined ? propSessionId : "";
+			const currentId = sessionId !== ""
+				? sessionId
+				: (typeof boundSessionId === "string" && boundSessionId.length > 0
+					? boundSessionId
+					: (typeof hostSession.sessionId === "string" && hostSession.sessionId.length > 0
+						? hostSession.sessionId : "default-session"));
+
+			const hasMore = propHasMore === true || hostSession.hasMore === true;
+			const loadingOlder = propLoadingOlder === true || hostSession.loadingOlder === true;
 			const [loadingAll, setLoadingAll] = useState(false);
 
-			const onLoadOlder = useCallback(() => {
-				const sid = sessionId || currentId;
-				if (!safeProps.sessions || typeof safeProps.sessions.binding !== "function" || !sid) return;
-				const b = safeProps.sessions.binding(sid);
-				if (b && b.session && typeof b.session.loadOlder === "function") {
-					b.session.loadOlder().catch((err) => console.warn("[conversation] loadOlder failed", err));
+			/** 当前会话 face：sessions.binding 可能缺失/抛错，统一在这里收口成 undefined。 */
+			const sessionBinding = (sid) => {
+				if (sid === undefined || sessionsFace === undefined || sessionsFace === null
+					|| typeof sessionsFace.binding !== "function") return undefined;
+				try {
+					return sessionsFace.binding(sid);
+				} catch (_) {
+					return undefined;
 				}
-			}, [safeProps.sessions, sessionId, currentId]);
+			};
+			const loadTarget = () => {
+				if (hostSession.session !== null) return hostSession.session;
+				const sid = propSessionId ?? hostSession.sessionId
+					?? (currentId === "default-session" ? undefined : currentId);
+				const binding = sessionBinding(sid);
+				return binding && binding.session ? binding.session : null;
+			};
+
+			const onLoadOlder = useCallback(() => {
+				const target = loadTarget();
+				if (target === null || typeof target.loadOlder !== "function") return;
+				try {
+					const pending = target.loadOlder();
+					if (pending !== null && pending !== undefined && typeof pending.catch === "function") {
+						pending.catch((err) => console.warn("[conversation] loadOlder failed", err));
+					}
+				} catch (err) {
+					console.warn("[conversation] loadOlder failed", err);
+				}
+			}, [hostSession.session, hostSession.sessionId, propSessionId, currentId, sessionsFace]);
 
 			const onLoadAll = useCallback(async () => {
-				const sid = sessionId || currentId;
-				if (!safeProps.sessions || typeof safeProps.sessions.binding !== "function" || !sid || loadingAll) return;
-				const b = safeProps.sessions.binding(sid);
-				if (!b || !b.session || typeof b.session.loadOlder !== "function") return;
+				const target = loadTarget();
+				if (target === null || typeof target.loadOlder !== "function"
+					|| typeof target.getSnapshot !== "function" || loadingAll) return;
 				setLoadingAll(true);
 				try {
 					let count = 0;
-					while (b.session.getSnapshot()?.hasMore === true && count < 100) {
-						await b.session.loadOlder();
+					while (target.getSnapshot()?.hasMore === true && count < 100) {
+						await target.loadOlder();
 						count += 1;
 					}
 				} catch (err) {
@@ -2342,7 +2605,7 @@ window.__ModuleLoader__.load({
 				} finally {
 					setLoadingAll(false);
 				}
-			}, [safeProps.sessions, sessionId, currentId, loadingAll]);
+			}, [hostSession.session, hostSession.sessionId, propSessionId, currentId, sessionsFace, loadingAll]);
 
 			const [copied, setCopied] = useState(false);
 			const copiedTimer = useRef(0);
@@ -2374,21 +2637,21 @@ window.__ModuleLoader__.load({
 				if (Array.isArray(hookNodes) && hookNodes.length > 0) return hookNodes;
 				if (!boundSessionId) return EMPTY_NODES;
 				try {
-					const b = safeProps.sessions && typeof safeProps.sessions.binding === "function"
-						? safeProps.sessions.binding(boundSessionId) : null;
+					const b = sessionsFace && typeof sessionsFace.binding === "function"
+						? sessionsFace.binding(boundSessionId) : null;
 					if (!b || !b.session || typeof b.session.getSnapshot !== "function") return EMPTY_NODES;
 					const nodes = conversationNodesOf(b.session.getSnapshot());
 					return Array.isArray(nodes) && nodes.length > 0 ? nodes : EMPTY_NODES;
 				} catch (_) {
 					return EMPTY_NODES;
 				}
-			}, [hookNodes, boundSessionId, safeProps.sessions]);
+			}, [hookNodes, boundSessionId, sessionsFace]);
 			stg("panel:after-sessionNodes");
 
+			// 数据优先级：props 钉死 hook → 宿主服务 chat 快照 → props sessions 旧回退
 			const activeNodes = (Array.isArray(hookNodes) && hookNodes.length > 0)
 				? hookNodes
-				: currentSessionNodes;
-
+				: (hostSession.nodes.length > 0 ? hostSession.nodes : currentSessionNodes);
 			const items = useMemo(() => {
 				if (!activeNodes || activeNodes.length === 0) return [];
 				try {
@@ -2989,10 +3252,18 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const store = createChromeStore();
+				// 宿主桥与 store 由插件自己合并，且放在最后：第三方 header 传给槽位的 props
+				// （可能为空、可能是另一套形状）覆盖不掉这两个字段。
+				const host = createHostBridge(ctx);
+				const slotProps = (props) => Object.assign(
+					{},
+					props === undefined || props === null ? {} : props,
+					{ store, host },
+				);
 
 				const SLOT = "conversation.session.header.actions";
 				const entryOpts = { name: SLOT, id: "dsh-conversation", order: 100, label: "大纲" };
-				const entryComp = (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }));
+				const entryComp = (props) => h(HistoryOutlineSlot, slotProps(props));
 
 				const slots = ctx.slots;
 				const channel = resolveSlotChannel(slots);
@@ -3075,6 +3346,13 @@ window.__ModuleLoader__.load({
 			conversationNodesOf,
 			normalizeOpacity,
 			resolveSlotChannel,
+			HistoryOutlineSlot,
+			readHostService,
+			createHostBridge,
+			mainSessionIdOf,
+			snapshotSourceOf,
+			safeNodesOf,
+			makeSessionBindingSelector,
 		});
 		return module.exports;
 	}
