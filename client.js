@@ -3448,7 +3448,8 @@ window.__ModuleLoader__.load({
 
 				pinned && !DIAG_NO_PANEL
 					? (mountPanel
-						? h(PanelBoundary, { key: hookShape }, h(HistoryOutlinePanelInner, safeProps))
+						? h(PanelBoundary, { key: hookShape },
+							h(HistoryOutlinePanelInner, Object.assign({}, safeProps, { key: "conv-panel" })))
 						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide }))
 					: null,
 			]);
