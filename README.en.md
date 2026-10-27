@@ -26,6 +26,8 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 - **Reading position memory** — each session remembers the outline node you last looked at, and the panel lands there when you come back.
 - **Empty state** — "No outline content yet" until the session has questions or headings.
 - **First-paint placeholder** — after a reload, while the host's session / chat data is not ready yet, the panel position shows "Reading conversation…" and the panel component mounts only once data is ready (no more empty-state flash). If the host still has no session binding after 2 seconds, the panel mounts anyway and shows the empty state.
+- **Adaptive header button (icon-only)** — when the right sidebar opens and the header narrows, the "Outline" button collapses to the bare icon via the **same mechanism as the native buttons**: the same container query (`@container (width<=540px)`) against the same `.wSkVaW_titleRow` container. The button really shrinks to icon width; `aria-label` / `title` stay, click and keyboard focus keep working; it restores when the space comes back. On older hosts without the container it degrades to the full-width button (safe).
+- Persisted state: `pinned` / drag position / view tier / rail toggle / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
 - Persisted state: `pinned` / drag position / view tier / rail toggle / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
 
 ## How it works

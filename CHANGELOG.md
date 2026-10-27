@@ -36,6 +36,20 @@
 =======
 ### Added
 
+- **标题栏「大纲」按钮自适应（icon-only）—— 复用宿主原生容器查询机制。** 之前的行为：按钮恒为
+  「svg + 文字」整块 —— 右侧边栏展开时宿主把自己的标题栏按钮收成图标（原生 label 在
+  `@container (width<=540px)` 下 `display:none`），而本按钮仍占整块宽，与相邻功能**重叠**。
+  现在的行为：给按钮的文字 span 注入**同一条件**的容器查询（容器同为宿主声明
+  `container-type: inline-size` 的 `.wSkVaW_titleRow`，阈值同为 540px）⇒ 右栏展开（titleRow ≤ 540px）
+  时文字隐藏、按钮**真实收窄**为图标宽（glyph + padding），与原生按钮同帧收起/还原；span 保持
+  挂载（与原生 label 同款处理），`aria-label` / `title` / `type=button` 不受影响，可点击、可键盘聚焦。
+  判定来源与原生逐字符一致（非自造测量、无 JS 状态）；宿主无该容器的旧版本 ⇒ 查询不命中 ⇒
+  保持宽态（降级安全，与原生行为一致）。新增判据 `test/icon-only.test.js`：来源一致性（条件与
+  原生逐字符相等）、选择器对位、两态布局模拟（宽度由解析产物 CSS 驱动，窄态 < 全宽 60%）、
+  降级断言，及 2 组变异自证。
+
+### Added
+
 - **一次性兼容性诊断日志（快照形状 + 宿主 DOM 契约）。**
   - 之前的行为：插件对宿主 DOM 属性（`data-chat-anchor-key` / `data-message-key` / `data-node-key` /
     `data-chat-flow-kind` / `data-conversation-scroll`）和会话快照结构（`legacy.nodes` / `nodes` /

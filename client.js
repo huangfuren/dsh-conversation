@@ -126,6 +126,21 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-state-business-primary, #4176e6);
         font-weight: 500;
       }
+      /* ①(2026-11-01 PR#2 适配点 2·第3版) 右栏展开 ⇒ 标题栏变窄 ⇒ 按钮收成 icon-only。
+         机制与宿主原生按钮**完全一致**（照抄，非自造测量）：
+         · 容器 = .wSkVaW_titleRow（宿主 dsh-client-ui-conversation 对它声明
+           container-type: inline-size —— 本按钮是该容器的后代）；
+         · 条件 = @container (width <= 540px)，与原生「智能体团队」按钮的 label 同一阈值
+           （宿主 dsh-client-ui-agent-preset：@container (width<=540px){.SVAs4q_label{display:none}}）；
+         · 效果：titleRow ≤ 540px（右栏展开）⇒ 文本 span display:none ⇒ 按钮真实收窄为
+           glyph 固有宽 + padding；span 仍挂载（与原生 label 同款处理），aria-label/title
+           在按钮上不受影响，可点击/可键盘聚焦不变。
+         · 降级：宿主无该容器（旧版）⇒ 容器查询不命中 ⇒ 保持宽态（不误收、不报错）。 */
+      @container (width <= 540px) {
+        .dsh-conv-header-btn .dsh-conv-header-btn-text {
+          display: none;
+        }
+      }
       .dsh-conv-panel {
         position: fixed;
         display: flex;
@@ -3444,7 +3459,7 @@ window.__ModuleLoader__.load({
 					"aria-label": t("panel.title"),
 					"aria-pressed": pinned,
 					onClick: () => store.set({ pinned: !pinned }),
-				}, h(OutlineGlyph), h("span", { style: { marginLeft: 4 } }, t("panel.title"))),
+				}, h(OutlineGlyph), h("span", { className: "dsh-conv-header-btn-text", style: { marginLeft: 4 } }, t("panel.title"))),
 
 				pinned && !DIAG_NO_PANEL
 					? (mountPanel
