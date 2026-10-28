@@ -192,8 +192,8 @@ function failingTestsIn(dir) {
   let out = ''
   try {
     // 本判据可能运行在 node --test 子进程里 ⇒ 剥掉 NODE_TEST_CONTEXT（嵌套 runner 否则进入
-    // "子报告"模式，stdout 为空）；MPW_ICON_MUTATIONS=0 禁用副本内的变异循环（防指数递归）。
-    const env = { ...process.env, MPW_ICON_MUTATIONS: '0' }
+    // "子报告"模式，stdout 为空）；CONV_ICON_MUTATIONS=0 禁用副本内的变异循环（防指数递归）。
+    const env = { ...process.env, CONV_ICON_MUTATIONS: '0' }
     delete env.NODE_TEST_CONTEXT
     out = execFileSync(process.execPath, ['--test', 'test/icon-only.test.js'], { cwd: dir, encoding: 'utf8', timeout: 120000, env })
   } catch (e) {
@@ -207,7 +207,7 @@ function failingTestsIn(dir) {
 }
 
 function withMutant(id, what, pairs, expectRed) {
-  const dir = mkTmp('mpw-icon-mut-')
+  const dir = mkTmp('conv-icon-mut-')
   let mutated = src0
   const applied = []
   for (const [anchor, replacement] of pairs) {
@@ -229,7 +229,7 @@ function withMutant(id, what, pairs, expectRed) {
   if (!eq) throw new Error('mutation mismatch: ' + id)
 }
 
-if (process.env.MPW_ICON_MUTATIONS !== '0') {
+if (process.env.CONV_ICON_MUTATIONS !== '0') {
   const MUTANTS = [
     ['M1-nohide', '规则删掉 display:none（窄态不再收窄）',
       [['      @container (width <= 540px) {\n        .dsh-conv-header-btn .dsh-conv-header-btn-text {\n          display: none;\n        }\n      }',
