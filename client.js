@@ -58,6 +58,21 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-state-business-primary, #4176e6);
         font-weight: 500;
       }
+      /* ①(2026-11-01 PR#2 适配点 2·第3版) 右栏展开 ⇒ 标题栏变窄 ⇒ 按钮收成 icon-only。
+         机制与宿主原生按钮**完全一致**（照抄，非自造测量）：
+         · 容器 = .wSkVaW_titleRow（宿主 dsh-client-ui-conversation 对它声明
+           container-type: inline-size —— 本按钮是该容器的后代）；
+         · 条件 = @container (width <= 540px)，与原生「智能体团队」按钮的 label 同一阈值
+           （宿主 dsh-client-ui-agent-preset：@container (width<=540px){.SVAs4q_label{display:none}}）；
+         · 效果：titleRow ≤ 540px（右栏展开）⇒ 文本 span display:none ⇒ 按钮真实收窄为
+           glyph 固有宽 + padding；span 仍挂载（与原生 label 同款处理），aria-label/title
+           在按钮上不受影响，可点击/可键盘聚焦不变。
+         · 降级：宿主无该容器（旧版）⇒ 容器查询不命中 ⇒ 保持宽态（不误收、不报错）。 */
+      @container (width <= 540px) {
+        .dsh-conv-header-btn .dsh-conv-header-btn-text {
+          display: none;
+        }
+      }
       .dsh-conv-panel {
         position: fixed;
         display: flex;
@@ -440,6 +455,31 @@ window.__ModuleLoader__.load({
         line-height: 1.6;
         color: var(--dsw-alias-label-caption, #adb2b8);
       }
+      /* ---- 首屏占位：会话数据就绪前只渲染外壳，不挂载面板组件 ---- */
+      .dsh-conv-panel-pending {
+        height: auto;
+        min-height: 96px;
+      }
+      .dsh-conv-pending-body {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 18px 16px;
+        color: var(--dsw-alias-label-tertiary, #65666b);
+        font-size: 13px;
+      }
+      .dsh-conv-pending-dot {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--dsw-alias-state-business-primary, #4176e6);
+        animation: dsh-conv-pending-pulse 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes dsh-conv-pending-pulse {
+        from { opacity: 0.3; }
+        to { opacity: 1; }
+      }
       .dsh-conv-footer {
         display: flex;
         gap: 8px;
@@ -709,6 +749,9 @@ window.__ModuleLoader__.load({
 		const MAX_USER_TEXT = 80;
 		const SEARCH_SCOPES = ["all", "query", "heading"];
 		const EXPORT_FILE_NAME = "dsh-conversation-outline.md";
+		// 首屏数据就绪的等待上限：超过它仍未拿到会话绑定就照常挂载（空态），
+		// 避免宿主某版本不再 retain 会话时面板永远停在占位。
+		const PANEL_READY_TIMEOUT_MS = 2000;
 
 		const ZH = {
 			"panel.title": "历史提问 · 大纲",
@@ -716,6 +759,7 @@ window.__ModuleLoader__.load({
 			"panel.github": "在 GitHub 上查看",
 			"panel.empty": "暂无大纲内容",
 			"panel.emptyHint": "发送一条消息，或等待助手回复中出现标题",
+			"panel.pending": "正在读取会话…",
 			"panel.viewPanel": "紧凑宽度",
 			"panel.viewWide": "加宽面板",
 			"panel.viewFull": "全屏展开",
@@ -758,6 +802,7 @@ window.__ModuleLoader__.load({
 			"panel.github": "View on GitHub",
 			"panel.empty": "No outline yet",
 			"panel.emptyHint": "Send a message, or wait for headings in the assistant reply",
+			"panel.pending": "Reading conversation…",
 			"panel.viewPanel": "Compact width",
 			"panel.viewWide": "Wide panel",
 			"panel.viewFull": "Full height",
@@ -1420,6 +1465,18 @@ window.__ModuleLoader__.load({
 		const FLASH_CLASS = "dsh-conv-flash";
 		const FLASH_MS = 1600;
 
+		/**
+		 * 面板依赖的宿主 DOM 契约（点击定位 / 阅读位置跟随）。宿主整体改名时，
+		 * 精确定位会退化为文本顺序匹配 —— 这里只负责探测与一次性告警，不改变容错行为。
+		 */
+		const DOM_CONTRACT = Object.freeze({
+			scroll: "[data-conversation-scroll]",
+			flowKind: "[data-chat-flow-kind]",
+			anchorKey: "[data-chat-anchor-key]",
+			messageKey: "[data-message-key]",
+			nodeKey: "[data-node-key]",
+		});
+
 		function findChatRoot() {
 			try {
 				const slotRoot = document.querySelector('[data-slot="conversation"]');
@@ -1457,6 +1514,117 @@ window.__ModuleLoader__.load({
 			} catch (e) {
 				return [];
 			}
+		}
+
+		// 一次性诊断状态：宿主契约变化时控制台只提示一次，避免刷屏。
+		let domContractReported = false;
+		let snapshotShapeReported = false;
+
+		/** 探测宿主 DOM 契约；纯读取，返回 { ok, missing, present }。 */
+		function probeDomContract(doc) {
+			const target = doc !== null && doc !== undefined && typeof doc.querySelector === "function" ? doc : null;
+			const has = (selector) => {
+				if (target === null) return false;
+				try {
+					return target.querySelector(selector) !== null;
+				} catch (_) {
+					return false;
+				}
+			};
+			const present = {
+				scroll: has(DOM_CONTRACT.scroll),
+				flowKind: has(DOM_CONTRACT.flowKind),
+				anchorKey: has(DOM_CONTRACT.anchorKey),
+				messageKey: has(DOM_CONTRACT.messageKey),
+				nodeKey: has(DOM_CONTRACT.nodeKey),
+			};
+			const missing = [];
+			if (!present.scroll) missing.push("data-conversation-scroll");
+			if (!present.flowKind) missing.push("data-chat-flow-kind");
+			// 三个锚点属性是等价候选：只要有一个在，精确定位就还可用。
+			if (!present.anchorKey && !present.messageKey && !present.nodeKey) {
+				missing.push("data-chat-anchor-key | data-message-key | data-node-key");
+			}
+			return { ok: missing.length === 0, missing, present };
+		}
+
+		/** 一次性 DOM 契约诊断：缺失/改名时明确告知降级后果，健康时也留一条 info。 */
+		function reportDomContractOnce(doc) {
+			if (domContractReported) return;
+			domContractReported = true;
+			const report = probeDomContract(doc);
+			if (report.ok) {
+				console.info("[conversation] DOM contract OK: data-conversation-scroll, data-chat-flow-kind, anchor keys");
+				return;
+			}
+			console.warn(
+				"[conversation] DOM contract changed or missing: " + report.missing.join(", ")
+				+ " — click-to-locate falls back to text-order matching (data-chat-flow-kind + heading text) "
+				+ "instead of exact anchors. If the host renamed these attributes, add the new names in "
+				+ "locateByKey / findChatScrollContainer / collectUserRows.",
+			);
+		}
+
+		/** 快照形状（与 snapshotRows 的判定顺序一致，便于对照日志）。 */
+		function snapshotShapeOf(snapshot) {
+			if (snapshot === null || snapshot === undefined) return "absent";
+			if (Array.isArray(snapshot)) return "array";
+			if (typeof snapshot !== "object") return "non-object";
+			const legacy = snapshot.legacy;
+			if (legacy !== null && legacy !== undefined && typeof legacy === "object" && Array.isArray(legacy.nodes)) {
+				return "legacy.nodes";
+			}
+			if (Array.isArray(snapshot.nodes)) return "nodes";
+			if (Array.isArray(snapshot.items)) return "items";
+			if (Array.isArray(snapshot.messages)) return "messages";
+			if (snapshot.chat !== null && snapshot.chat !== undefined && typeof snapshot.chat === "object"
+				&& Array.isArray(snapshot.chat.order)) {
+				return "chat.order";
+			}
+			if (snapshot.nodes !== null && snapshot.nodes !== undefined && typeof snapshot.nodes === "object"
+				&& typeof snapshot.nodes.values === "function") {
+				return "nodes.values";
+			}
+			return "unknown";
+		}
+
+		/** 像 ChatSnapshot、但形状不认识：值得报一次，避免宿主改结构后静默空态。 */
+		function looksLikeChatSnapshot(snapshot) {
+			if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) return false;
+			for (const key of ["legacy", "nodes", "items", "messages", "chat", "order", "partial"]) {
+				if (Object.prototype.hasOwnProperty.call(snapshot, key)) return true;
+			}
+			return false;
+		}
+
+		/**
+		 * 一次性快照形状诊断：新旧结构（legacy.nodes / nodes / chat.order …）都支持，
+		 * 这里只把「这次实际用的是哪种 + 行数」打出来；陌生形状明确警告。
+		 * 数据还没到时（absent / non-object）不消耗这次机会。
+		 */
+		function reportSnapshotShapeOnce(snapshot, rowCount) {
+			if (snapshotShapeReported) return;
+			const shape = snapshotShapeOf(snapshot);
+			if (shape === "absent" || shape === "non-object") return;
+			if (shape === "unknown" && looksLikeChatSnapshot(snapshot) === false) return;
+			snapshotShapeReported = true;
+			const rows = typeof rowCount === "number" ? rowCount : safeNodesOf(snapshot).length;
+			if (shape === "unknown") {
+				console.warn(
+					"[conversation] unrecognised session snapshot shape; the outline stays empty. "
+					+ "Expected legacy.nodes[] / nodes[] / items[] / messages[] / chat.{order,nodes}. "
+					+ "Keys seen: " + Object.keys(snapshot).join(", "),
+				);
+				return;
+			}
+			console.info("[conversation] session snapshot shape: " + shape + " (" + rows
+				+ (rows === 1 ? " row)" : " rows)"));
+		}
+
+		/** 测试用：重置一次性诊断标记（生产代码不调用）。 */
+		function resetDiagnostics() {
+			domContractReported = false;
+			snapshotShapeReported = false;
 		}
 
 		function compactText(value) {
@@ -2050,6 +2218,245 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 快照归一后的数组兜底。宿主换快照形状、第三方 header 传自定义 props、或服务暂时
+		 * 不可用时，返回值都可能是 undefined / 非数组；UI 只接受数组。
+		 */
+		function safeNodesOf(snapshot) {
+			let rows;
+			try {
+				rows = conversationNodesOf(snapshot);
+			} catch (_) {
+				return [];
+			}
+			return Array.isArray(rows) ? rows : [];
+		}
+
+		/**
+		 * 只读宿主服务：优先走 cordis 反射层（`ctx.reflect.get(name, false)` —— 未提供时
+		 * 返回 undefined 而不是抛错），再退回属性访问。宿主改名 / 尚未就绪时返回 undefined，
+		 * 由 UI 降级为空态 —— 与 README/SECURITY 的「宿主 API 降级不拖垮同槽位」承诺一致。
+		 */
+		function readHostService(ctx, name) {
+			if (ctx === null || ctx === undefined) return undefined;
+			try {
+				const reflect = ctx.reflect;
+				if (reflect !== null && reflect !== undefined && typeof reflect.get === "function") {
+					const value = reflect.get(name, false);
+					if (value !== undefined && value !== null) return value;
+				}
+			} catch (_) { /* 反射层不可用：继续尝试属性访问 */ }
+			try {
+				const value = ctx[name];
+				return value === null ? undefined : value;
+			} catch (_) {
+				return undefined;
+			}
+		}
+
+		/**
+		 * 插件私有的宿主桥。apply() 时创建一次，随槽位 props 下发（包装器里最后合并，
+		 * 第三方 header 传什么 props 都覆盖不掉它）：
+		 * - slot props 里的 useChat / useSession / useSessions 在 0.2.0-rc.2 的
+		 *   `conversation.session.header.actions` 上可能全缺失，面板因此还有第二条数据路径：
+		 *   直接读 uiSession 服务里「主视图绑定」的 chat / session 源；
+		 * - 服务同样缺失（旧宿主 / 精简宿主）时退回 slot props 路径，行为与 1.3.1 一致。
+		 */
+		function createHostBridge(ctx) {
+			return {
+				read(name) {
+					return readHostService(ctx, name);
+				},
+			};
+		}
+
+		// uSES 的 fallback source 必须是模块级常量：服务缺席时 hook 形状仍与就绪时一致。
+		const NOOP_SUBSCRIBE = () => () => {};
+		const EMPTY_HOST_SNAPSHOT = Object.freeze({});
+		const EMPTY_HOST_SNAPSHOT_GET = () => EMPTY_HOST_SNAPSHOT;
+
+		/** 把一个 { getSnapshot, subscribe } 的宿主 store 包成 uSES 可直接使用的稳定 source。
+		 *  订阅/读取都吞掉异常：宿主 store 抛错时返回空快照，面板降级为空态而不是崩槽位。 */
+		function snapshotSourceOf(store) {
+			if (store === null || store === undefined || typeof store !== "object") return null;
+			if (typeof store.getSnapshot !== "function" || typeof store.subscribe !== "function") return null;
+			return {
+				subscribe: (listener) => {
+					try {
+						const off = store.subscribe(listener);
+						return typeof off === "function" ? off : NOOP_SUBSCRIBE();
+					} catch (_) {
+						return NOOP_SUBSCRIBE();
+					}
+				},
+				getSnapshot: () => {
+					try {
+						const value = store.getSnapshot();
+						return value === undefined ? EMPTY_HOST_SNAPSHOT : value;
+					} catch (_) {
+						return EMPTY_HOST_SNAPSHOT;
+					}
+				},
+			};
+		}
+
+		/** 从宿主桥读服务；bridge 自己抛错时按缺失处理（不向上冒泡）。 */
+		function hostServiceOf(host, name) {
+			if (host === null || host === undefined || typeof host.read !== "function") return undefined;
+			try {
+				return host.read(name);
+			} catch (_) {
+				return undefined;
+			}
+		}
+
+		/** 会话列表里「主视图正在使用」的会话（与宿主 ui-session 的 publishMain 同款判定）。 */
+		function mainSessionIdOf(sessionsService, listSnapshot) {
+			if (sessionsService === null || sessionsService === undefined) return undefined;
+			let list = listSnapshot;
+			if (list === null || list === undefined || typeof list !== "object") {
+				try {
+					const store = sessionsService.list;
+					list = store !== null && store !== undefined && typeof store.getSnapshot === "function"
+						? store.getSnapshot() : undefined;
+				} catch (_) {
+					list = undefined;
+				}
+			}
+			if (list === null || list === undefined || typeof list !== "object") return undefined;
+			const byId = list.byId !== null && typeof list.byId === "object" ? list.byId : {};
+			let best;
+			let bestRetained = 0;
+			for (const id of Object.keys(byId)) {
+				const row = byId[id];
+				const retained = row !== null && typeof row === "object"
+					&& row.retainedBy !== null && typeof row.retainedBy === "object"
+					? Number(row.retainedBy.mainView) || 0 : 0;
+				if (retained > bestRetained) {
+					best = id;
+					bestRetained = retained;
+				}
+			}
+			if (best !== undefined) return best;
+			if (typeof list.current === "string" && list.current.length > 0) return list.current;
+			const ids = Array.isArray(list.ids) ? list.ids : [];
+			return ids.length === 1 && typeof ids[0] === "string" ? ids[0] : undefined;
+		}
+
+		/**
+		 * slot props 路径的回退快照 selector（0.1.x 契约）：props 里带 sessions 服务时，
+		 * 用会话根的 current 找当前会话 face。纯函数，hook 已在组件顶层调用。
+		 */
+		function makeSessionBindingSelector(sessionsFace) {
+			return (root) => {
+				try {
+					if (root === null || root === undefined || typeof root !== "object") return null;
+					const id = typeof root.current === "string" ? root.current : undefined;
+					if (id === undefined || sessionsFace === null || sessionsFace === undefined
+						|| typeof sessionsFace.binding !== "function") return null;
+					const binding = sessionsFace.binding(id);
+					return binding !== null && binding !== undefined && binding.session
+						? binding.session.getSnapshot() : null;
+				} catch (_) {
+					return null;
+				}
+			};
+		}
+
+		/**
+		 * 服务路径的会话快照（不依赖 slot props）。每个 hook 都无条件调用：服务缺失时使用
+		 * 模块级 no-op source，因此 hook 顺序不随宿主能力 / 数据时序变化（1.3.1 崩溃的反面）。
+		 *
+		 * 数据来源（宿主 0.2.0-rc.2 的公开面）：
+		 * - `uiSession.current`：主视图绑定的 `{ key, hooks: { session, chat }, props }`；
+		 * - `hooks.chat`：ChatSnapshot（`legacy.nodes` / `partial`），即大纲数据；
+		 * - `hooks.session`：Session 对象（`hasMore` / `loadingOlder` / `loadOlder`）。
+		 * uiSession 缺席时退回 `sessions.list` + `sessions.binding(id).session`；这条退路没有
+		 * chat 源，因此只保证「不崩、不闪」，数据为空态而不是伪造。
+		 */
+		function useHostSession(host) {
+			const uiSession = hostServiceOf(host, "uiSession");
+			const sessionsService = hostServiceOf(host, "sessions");
+
+			const currentSource = useMemo(() => snapshotSourceOf(uiSession && uiSession.current), [uiSession]);
+			const binding = useSyncExternalStore(
+				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
+				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
+			);
+			const bindingKey = binding !== null && typeof binding === "object"
+				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
+
+			const listSource = useMemo(() => snapshotSourceOf(sessionsService && sessionsService.list), [sessionsService]);
+			const listSnapshot = useSyncExternalStore(
+				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
+				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
+			);
+			const listedSessionId = useMemo(() => mainSessionIdOf(sessionsService, listSnapshot), [sessionsService, listSnapshot]);
+			const sessionId = bindingKey === undefined ? listedSessionId : bindingKey;
+
+			const chatSource = useMemo(() => {
+				const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
+				return snapshotSourceOf(hooks && hooks.chat);
+			}, [binding]);
+			const chatSnapshot = useSyncExternalStore(
+				chatSource === null ? NOOP_SUBSCRIBE : chatSource.subscribe,
+				chatSource === null ? EMPTY_HOST_SNAPSHOT_GET : chatSource.getSnapshot,
+			);
+
+			const session = useMemo(() => {
+				try {
+					const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
+					const direct = hooks && hooks.session;
+					if (direct !== null && direct !== undefined && typeof direct.getSnapshot === "function"
+						&& typeof direct.subscribe === "function") {
+						return direct;
+					}
+					if (sessionId === undefined || sessionsService === null || sessionsService === undefined
+						|| typeof sessionsService.binding !== "function") return null;
+					const found = sessionsService.binding(sessionId);
+					const fallback = found && found.session;
+					return fallback !== null && fallback !== undefined
+						&& typeof fallback.getSnapshot === "function" && typeof fallback.subscribe === "function"
+						? fallback : null;
+				} catch (_) {
+					return null;
+				}
+			}, [binding, sessionId, sessionsService]);
+
+			const sessionSource = useMemo(() => snapshotSourceOf(session), [session]);
+			const sessionSnapshot = useSyncExternalStore(
+				sessionSource === null ? NOOP_SUBSCRIBE : sessionSource.subscribe,
+				sessionSource === null ? EMPTY_HOST_SNAPSHOT_GET : sessionSource.getSnapshot,
+			);
+
+			const nodes = useMemo(() => safeNodesOf(chatSnapshot), [chatSnapshot]);
+			const snapshot = chatSnapshot !== null && typeof chatSnapshot === "object" ? chatSnapshot : null;
+			return {
+				available: uiSession !== undefined || sessionsService !== undefined,
+				ready: sessionId !== undefined,
+				sessionId,
+				session,
+				sessions: sessionsService,
+				snapshot,
+				sessionSnapshot: sessionSnapshot !== null && typeof sessionSnapshot === "object" ? sessionSnapshot : null,
+				nodes,
+				hasMore: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.hasMore === true,
+				loadingOlder: sessionSnapshot !== null && typeof sessionSnapshot === "object" && sessionSnapshot.loadingOlder === true,
+			};
+		}
+
+		/**
+		 * 首屏挂载闸门：数据未就绪时先渲染占位，就绪后再挂载面板组件。
+		 * - 宿主服务不可用（旧宿主 / 测试桩）⇒ 无法判断就绪，保持 1.3.1 的直接挂载；
+		 * - 服务可用但还没有会话绑定 ⇒ pending（除非等待超时）；
+		 * - 有会话绑定 ⇒ mount（此时 chat 快照可能仍是空数组，面板展示空态）。
+		 */
+		function panelMountStateOf(hostSession, timedOut) {
+			if (hostSession === null || hostSession === undefined || hostSession.available !== true) return "mount";
+			if (hostSession.ready === true) return "mount";
+			return timedOut === true ? "mount" : "pending";
+		}
+
+		/**
 		 * 无 hooks 的外壳：store 不可用时直接不渲染。
 		 * 放在这里而不是组件内部，是为了不在 hooks 之前做条件返回。
 		 */
@@ -2069,38 +2476,104 @@ window.__ModuleLoader__.load({
 
 			const chrome = useSyncExternalStore(store.subscribe, store.getSnapshot);
 
-			// Session scope props: 优先 useChat (session-scoped slot), 退回到 useSessions (root-scoped slot)
-			const useSession = safeProps.useSession || safeProps.useSessions;
-			const useChat = safeProps.useChat;
-			const sessionId = safeProps.sessionId;
-			const currentId = (typeof sessionId === "string" && sessionId.length > 0)
-				? sessionId
-				: (typeof safeProps.useSessions === "function" ? safeProps.useSessions((s) => s?.current) : undefined)
+			// 宿主服务路径：0.2.0-rc.2 的 header.actions owner props 是 `{}`，slot props 里的
+			// useChat / useSession / useSessions 可能全部缺席。服务路径不依赖 props，并且 hook
+			// 形状恒定（服务缺席时走模块级 no-op source），因此不会重演 1.3.1 的 hook 链错位。
+			const hostSession = useHostSession(safeProps.host);
+
+			// slot props 路径（旧宿主 / 第三方 header 直接注入 hook）：先 typeof 防御再调用，
+			// 返回值一律 safeNodesOf 归一。props 形状变化最多让本面板空态，不会波及槽位。
+			const propUseChat = typeof safeProps.useChat === "function" ? safeProps.useChat : undefined;
+			const propUseSession = typeof safeProps.useSession === "function" ? safeProps.useSession : undefined;
+			const propUseSessions = typeof safeProps.useSessions === "function" ? safeProps.useSessions : undefined;
+			const propNodesHook = propUseChat !== undefined ? propUseChat : propUseSession;
+			// 选择器取原始快照（身份选择器）：诊断日志要报「宿主给的形状」，而不是归一后的数组。
+			// 归一统一走 safeNodesOf，宿主 selector 的语义不再决定插件的数据形状。
+			const propSnapshot = propNodesHook === undefined ? null : propNodesHook((snapshot) => snapshot);
+			// useMemo 保证「空快照 ⇒ []」的引用稳定：否则每轮渲染新数组会让 items/effect 反复触发。
+			const propNodes = useMemo(
+				() => (propSnapshot === null ? null : safeNodesOf(propSnapshot)),
+				[propSnapshot],
+			);
+			const propHasMore = propUseSession === undefined ? false : propUseSession((s) => s?.hasMore === true) === true;
+			const propLoadingOlder = propUseSession === undefined ? false : propUseSession((s) => s?.loadingOlder === true) === true;
+			const propCurrentId = propUseSessions === undefined
+				? undefined
+				: propUseSessions((s) => (s !== null && typeof s === "object" ? s.current : undefined));
+
+			// 会话 face：优先 slot props 里带的旧 sessions 服务，其次插件 bridge 的 sessions 服务。
+			const propFace = safeProps.sessions !== null && safeProps.sessions !== undefined
+				&& typeof safeProps.sessions.binding === "function" ? safeProps.sessions : undefined;
+			const sessionsFace = propFace !== undefined ? propFace : hostSession.sessions;
+			// 旧回退（0.1.x 契约）：props 里有 sessions 时按 useSessions.current 取快照。
+			// hooks 已全部提到组件顶层，memo 回调零 hook —— 这正是 1.3.1 崩溃的根因。
+			const propFallbackSnapshot = propUseSessions === undefined
+				? null : propUseSessions(makeSessionBindingSelector(propFace));
+
+			const propSessionId = typeof safeProps.sessionId === "string" && safeProps.sessionId.length > 0
+				? safeProps.sessionId : undefined;
+			const currentId = propSessionId
+				?? (typeof propCurrentId === "string" && propCurrentId.length > 0 ? propCurrentId : undefined)
+				?? hostSession.sessionId
 				?? "default-session";
 
-			const hasMore = typeof useSession === "function" ? useSession((s) => s?.hasMore === true) : false;
-			const loadingOlder = typeof useSession === "function" ? useSession((s) => s?.loadingOlder === true) : false;
+			// 数据行：slot props hook 优先（旧宿主仍以此为准），其次服务路径的 chat 快照，
+			// 最后是旧回退快照；三者都拿不到就是 []（空态），绝不 undefined。
+			const activeNodes = useMemo(() => {
+				if (Array.isArray(propNodes) && propNodes.length > 0) return propNodes;
+				if (hostSession.nodes.length > 0) return hostSession.nodes;
+				return safeNodesOf(propFallbackSnapshot);
+			}, [propNodes, hostSession.nodes, propFallbackSnapshot]);
+
+			// 诊断用原始快照：与实际驱动大纲的那一份保持一致（props 优先，其次服务，最后旧回退）。
+			const observedSnapshot = (Array.isArray(propNodes) && propNodes.length > 0)
+				? propSnapshot
+				: (hostSession.snapshot !== null ? hostSession.snapshot : propFallbackSnapshot);
+
+			const hasMore = propHasMore === true || hostSession.hasMore === true;
+			const loadingOlder = propLoadingOlder === true || hostSession.loadingOlder === true;
 			const [loadingAll, setLoadingAll] = useState(false);
 
-			const onLoadOlder = useCallback(() => {
-				const sid = sessionId || currentId;
-				if (!safeProps.sessions || typeof safeProps.sessions.binding !== "function" || !sid) return;
-				const b = safeProps.sessions.binding(sid);
-				if (b && b.session && typeof b.session.loadOlder === "function") {
-					b.session.loadOlder().catch((err) => console.warn("[conversation] loadOlder failed", err));
+			/** 当前会话 face：sessions.binding 可能缺失/抛错，统一在这里收口成 undefined。 */
+			const sessionBinding = (sid) => {
+				if (sid === undefined || sessionsFace === undefined || sessionsFace === null
+					|| typeof sessionsFace.binding !== "function") return undefined;
+				try {
+					return sessionsFace.binding(sid);
+				} catch (_) {
+					return undefined;
 				}
-			}, [safeProps.sessions, sessionId, currentId]);
+			};
+			const loadTarget = () => {
+				if (hostSession.session !== null) return hostSession.session;
+				const sid = propSessionId ?? hostSession.sessionId
+					?? (currentId === "default-session" ? undefined : currentId);
+				const binding = sessionBinding(sid);
+				return binding && binding.session ? binding.session : null;
+			};
+
+			const onLoadOlder = useCallback(() => {
+				const target = loadTarget();
+				if (target === null || typeof target.loadOlder !== "function") return;
+				try {
+					const pending = target.loadOlder();
+					if (pending !== null && pending !== undefined && typeof pending.catch === "function") {
+						pending.catch((err) => console.warn("[conversation] loadOlder failed", err));
+					}
+				} catch (err) {
+					console.warn("[conversation] loadOlder failed", err);
+				}
+			}, [hostSession.session, hostSession.sessionId, propSessionId, currentId, sessionsFace]);
 
 			const onLoadAll = useCallback(async () => {
-				const sid = sessionId || currentId;
-				if (!safeProps.sessions || typeof safeProps.sessions.binding !== "function" || !sid || loadingAll) return;
-				const b = safeProps.sessions.binding(sid);
-				if (!b || !b.session || typeof b.session.loadOlder !== "function") return;
+				const target = loadTarget();
+				if (target === null || typeof target.loadOlder !== "function"
+					|| typeof target.getSnapshot !== "function" || loadingAll) return;
 				setLoadingAll(true);
 				try {
 					let count = 0;
-					while (b.session.getSnapshot()?.hasMore === true && count < 100) {
-						await b.session.loadOlder();
+					while (target.getSnapshot()?.hasMore === true && count < 100) {
+						await target.loadOlder();
 						count += 1;
 					}
 				} catch (err) {
@@ -2108,7 +2581,7 @@ window.__ModuleLoader__.load({
 				} finally {
 					setLoadingAll(false);
 				}
-			}, [safeProps.sessions, sessionId, currentId, loadingAll]);
+			}, [hostSession.session, hostSession.sessionId, propSessionId, currentId, sessionsFace, loadingAll]);
 
 			const [copied, setCopied] = useState(false);
 			const copiedTimer = useRef(0);
@@ -2133,32 +2606,7 @@ window.__ModuleLoader__.load({
 				}
 			}, [currentId]);
 
-			// Session data: 优先使用 session scope 的 useChat 或 useSession selector
-			const nodesHook = useChat ?? useSession;
-			const hookNodes = nodesHook ? nodesHook(conversationNodesOf) : [];
-
-			// Fallback: 如果 slot 未直接收到 hook（如跨槽或独立渲染），从 useSessions 查找当前会话
-			const currentSessionNodes = useMemo(() => {
-				if (Array.isArray(hookNodes) && hookNodes.length > 0) return hookNodes;
-				const useSessions = safeProps.useSessions;
-				if (typeof useSessions !== "function") return [];
-				try {
-					const snap = useSessions((s) => {
-						if (!s || !s.current) return null;
-						const b = safeProps.sessions && typeof safeProps.sessions.binding === "function"
-							? safeProps.sessions.binding(s.current) : null;
-						return b && b.session ? b.session.getSnapshot() : null;
-					});
-					return conversationNodesOf(snap);
-				} catch (_) {
-					return [];
-				}
-			}, [hookNodes, safeProps.useSessions, safeProps.sessions]);
-
-			const activeNodes = (Array.isArray(hookNodes) && hookNodes.length > 0)
-				? hookNodes
-				: currentSessionNodes;
-
+			// Session data: slot props hook 优先，其次服务路径（见上方 activeNodes 的合并顺序）。
 			const items = useMemo(() => {
 				if (!activeNodes || activeNodes.length === 0) return [];
 				try {
@@ -2168,6 +2616,16 @@ window.__ModuleLoader__.load({
 					return [];
 				}
 			}, [activeNodes]);
+
+			// 一次性诊断（每次页面加载最多各一条）：快照形状 + 宿主 DOM 契约。
+			// 只在真实渲染路径上打，普通单测直接调纯函数不会触发。
+			const diagnosticsReady = items.length > 0;
+			useEffect(() => {
+				if (observedSnapshot !== null && observedSnapshot !== undefined) {
+					reportSnapshotShapeOnce(observedSnapshot, activeNodes.length);
+				}
+				if (diagnosticsReady === true) reportDomContractOnce(document);
+			}, [observedSnapshot, diagnosticsReady]);
 
 			if (items.length > 0 && manager.items.length === 0) {
 				manager.setItems(items);
@@ -2661,20 +3119,61 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * 首屏占位（pinned 且会话数据未就绪）：与面板同位置、同外壳，
+		 * 但不挂载 HistoryOutlinePanelInner —— 刷新时数据到达前不进入面板的 hook/订阅路径。
+		 */
+		function HistoryOutlinePlaceholder(props) {
+			const safeProps = props === undefined || props === null ? {} : props;
+			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
+			const side = safeProps.side === "left" ? "left" : "right";
+			const style = side === "left"
+				? { width: VIEW_SIZES.panel.width, left: 16, top: 72, right: "auto" }
+				: { width: VIEW_SIZES.panel.width, right: 16, top: 72, left: "auto" };
+			return h("div", {
+				className: "dsh-conv-panel dsh-conv-panel-pending",
+				style,
+				role: "status",
+				"aria-live": "polite",
+				"aria-busy": "true",
+				"aria-label": t("panel.title"),
+			},
+				h("div", { className: "dsh-conv-header" },
+					h("span", { className: "dsh-conv-headerglyph" }, h(OutlineGlyph)),
+					h("span", { className: "dsh-conv-title" }, t("panel.title"))),
+				h("div", { className: "dsh-conv-pending-body" },
+					h("span", { className: "dsh-conv-pending-dot" }),
+					h("span", null, t("panel.pending"))));
+		}
+
+		/**
 		 * 槽位标准组件：挂载在 conversation.session.header.actions 槽位。
 		 * 1. 无论面板开闭，Header 工具栏中永远渲染一个稳固的「大纲」操作按钮，绝不会消失！
-		 * 2. pinned === true 时，同级挂载悬浮大纲面板。
+		 * 2. pinned === true 且会话数据就绪后，同级挂载悬浮大纲面板；
+		 *    数据未就绪时先渲染占位（见 panelMountStateOf），就绪后再挂载。
 		 * 3. pinned === false 且 rail === true 时，同级挂载右边缘刻度滑轨。
 		 */
 		function HistoryOutlineSlot(props) {
 			const safeProps = props === undefined || props === null ? {} : props;
 			const store = safeProps.store;
+			// store 由 apply() 的包装器保证存在；这个提前返回只服务独立渲染/测试。
+			// "store 是否可用"在一次挂载内恒定，因此不会造成 hook 数量变化。
 			if (!store || typeof store.subscribe !== "function" || typeof store.getSnapshot !== "function") {
 				return null;
 			}
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
 			const chrome = useSyncExternalStore(store.subscribe, store.getSnapshot);
 			const pinned = chrome.pinned === true;
+
+			// 首屏闸门用到的 hook 全部无条件调用（与宿主服务是否就绪无关）。
+			const hostSession = useHostSession(safeProps.host);
+			const [timedOut, setTimedOut] = useState(false);
+			useEffect(() => {
+				if (hostSession.available !== true || hostSession.ready === true || timedOut === true) return undefined;
+				const timer = window.setTimeout(() => setTimedOut(true), PANEL_READY_TIMEOUT_MS);
+				return () => window.clearTimeout(timer);
+			}, [hostSession.available, hostSession.ready, timedOut]);
+			const mountPanel = panelMountStateOf(hostSession, timedOut) === "mount";
+			const dockSide = loadDockSide();
 
 			return h(Fragment, null, [
 				h("button", {
@@ -2685,9 +3184,13 @@ window.__ModuleLoader__.load({
 					"aria-label": t("panel.title"),
 					"aria-pressed": pinned,
 					onClick: () => store.set({ pinned: !pinned }),
-				}, h(OutlineGlyph), h("span", { style: { marginLeft: 4 } }, t("panel.title"))),
+				}, h(OutlineGlyph), h("span", { className: "dsh-conv-header-btn-text", style: { marginLeft: 4 } }, t("panel.title"))),
 
-				pinned ? h(HistoryOutlinePanelInner, safeProps) : null,
+				pinned
+					? (mountPanel
+						? h(HistoryOutlinePanelInner, Object.assign({}, safeProps, { key: "conv-panel" }))
+						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide }))
+					: null,
 			]);
 		}
 
@@ -2705,13 +3208,21 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const store = createChromeStore();
+				// 宿主桥与 store 由插件自己合并，且放在最后：第三方 header 传给槽位的 props
+				// （可能为空、可能是另一套形状）覆盖不掉这两个字段。
+				const host = createHostBridge(ctx);
+				const slotProps = (props) => Object.assign(
+					{},
+					props === undefined || props === null ? {} : props,
+					{ store, host },
+				);
 
 				ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
 					name: "conversation.session.header.actions",
 					id: "dsh-conversation",
 					order: 100,
 					label: "大纲",
-				}, (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }))));
+				}, (props) => h(HistoryOutlineSlot, slotProps(props))));
 			} catch (err) {
 				console.warn("[conversation] init failed; panel disabled: " + (err && err.message ? err.message : err));
 			}
@@ -2725,6 +3236,21 @@ window.__ModuleLoader__.load({
 			userText,
 			buildOutlineItems,
 			conversationNodesOf,
+			HistoryOutlinePanelInner,
+			HistoryOutlineSlot,
+			HistoryOutlinePlaceholder,
+			panelMountStateOf,
+			probeDomContract,
+			snapshotShapeOf,
+			reportDomContractOnce,
+			reportSnapshotShapeOnce,
+			resetDiagnostics,
+			readHostService,
+			createHostBridge,
+			mainSessionIdOf,
+			snapshotSourceOf,
+			safeNodesOf,
+			makeSessionBindingSelector,
 		});
 		return module.exports;
 	}
