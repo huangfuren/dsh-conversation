@@ -12,10 +12,12 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 
 - **常驻态（默认）**：浮动面板（`dsh-conv-panel`），标题「历史提问 · 大纲」。
   - **三档宽度**：紧凑 320px → 加宽 480px → 全屏 720px 整高，标题栏按钮循环切换（快捷键 `Alt+↑/↓` 见下）；
+  - **左右停靠**：标题栏的停靠按钮在靠左 / 靠右之间切换，切换后回到默认位置；
   - 标题栏是拖拽把手（4px 阈值，拖动后位置持久化）；
   - 工具行：展开/收起全部、只看收藏、**复制大纲**（Markdown 进剪贴板）、**导出为 .md 文件**、搜索框（命中片段高亮）；
   - **搜索范围**：点击搜索框左侧的「全部 / 问题 / 标题」按钮循环切换，只匹配提问或只匹配标题；
   - 层级滑块：0 = 仅显示提问，1~6 = 展开到对应标题层级，圆点 tooltip 显示各层级数量；
+  - **背景透明度**：面板底部滑杆可在 40%~100% 之间调背景不透明度（默认 100%，与旧版观感一致）。只降底色、不降文字，调暗时自动给背景加模糊；点右侧百分比回到完全不透明，双击滑杆同样可复位。用于面板挡住正文时把内容透出来；
   - 列表行：折叠箭头 / `Q1` 序号徽标 / 文本 / 提问时间 / **该轮「N 工具」「N 字」统计** / 收藏星；当前阅读位置的行自动浅底高亮并滚入可视区；
   - 底部：回到顶部 / 回到底部 / **侧边刻度条开关**。
 - **收起态**：默认显示**右侧刻度条**（`dsh-conv-rail`）—— 一 tick = 一轮提问，长度按该轮正文量归一化（顺带成了"对话密度图"），hover 有该轮摘要，点击跳到该轮，顶部的图标按钮展开面板；关掉刻度条则回落到右上角胶囊（`dsh-conv-fab`）「历史提问 · 大纲 (N)」。
@@ -23,7 +25,7 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 - **键盘**：面板聚焦时 `Alt+↓ / Alt+↑` 跳到下一个 / 上一个节点（只在面板内监听，不抢宿主按键）。
 - **阅读位置记忆**：每个会话记录上次看到的大纲节点，切回来时面板直接落在那里。
 - **空态**：会话里还没有提问/标题时显示「暂无大纲内容」。
-- 状态持久化：`pinned` / 拖拽位置 / 视图档位 / 刻度条开关 / 默认展开层级 / 每会话收藏 / 每会话阅读位置，全部走 `localStorage`（键前缀 `dsh-conversation:`）。
+- 状态持久化：`pinned` / 拖拽位置 / 视图档位 / 刻度条开关 / 面板背景不透明度 / 默认展开层级 / 每会话收藏 / 每会话阅读位置，全部走 `localStorage`（键前缀 `dsh-conversation:`）。
 
 ## 实现方式
 
@@ -34,8 +36,8 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 
 客户端半行为：
 
-1. 通过 `inject: ["slots", "sessions"]` 取两个必需服务，缺失则打警告并禁用面板。
-2. 在 `shell.overlay` 槽位注册 `question-history`（`order: 100`），并把 `store` / `sessions` 透传给面板，不依赖 face 注入。
+1. 通过 `inject: ["slots", "sessions"]` 取两个必需服务；只有 `slots.register` 本身缺失才打警告并禁用面板。
+2. 在 `conversation.session.header.actions` 槽位注册 `dsh-conversation`（`order: 100`），并把 `store` / `sessions` 透传给面板，不依赖 face 注入。
 3. `sessions.binding(id)` 取当前会话 face，用 `useSyncExternalStore` 订阅 `getSnapshot()`。
 4. `buildOutlineItems` 把快照摊平成大纲项：user/steering → level 0（同时统计该轮工具数与正文字数）；assistant 的 text block 按 ATX 标题（`^#{1,6}\s+`，跳过围栏代码块内的 `#`）→ level 1~6；流式中的 `partial` 标题实时出现并带呼吸动画；tool-call / context 等非正文节点只计数、不进大纲。
 5. `OutlineManager` 持有层级、搜索（含范围）、收藏状态并与 localStorage 同步；折树 / 折叠恢复 / 可见行压平 / 定位揭示都是纯函数。
@@ -48,6 +50,8 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 
 - **快照契约双支持**：新结构 `snapshot.nodes[]` + `snapshot.partial`；旧结构 `snapshot.chat.{order, nodes(Map)}` + `node.data.content`。结构不符时返回空列表而不是抛错。
 - **宿主 API 降级**：`slots` / `sessions` 的形状、face 的 `getSnapshot` / `subscribe` 都逐层探测；任一改名或缺失只让本面板消失，不会拖垮同槽位的其它插件。
+- **注册通道三层兜底**：槽位声明可能晚于插件装载，首次 `slots.register` 会抛 `slot "…" is not declared`（0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 三版都会这样抛）。因此按宿主实际能力选通道：① `slots.inject` 存在 → 沿用宿主契约；② 否则 `slots.subscribeDeclaration` 存在 → 订阅声明事件后注册，槽位塌缩重建也能自动恢复；③ 都没有 → 立即尝试 + 700ms 退避重试（≤12 次）。`inject` 消失不再导致面板整块消失。重复注册由 `declarationEpoch` 把关，避免同 id 触发 `already has an entry`。
+- **样式能力探测**：背景透明度依赖 CSS `color-mix`（Chromium 111+）。宿主不支持时该行不渲染、面板保持完全不透明，不会留下「拖了没反应」的死控件。
 - **文案双语**：自带 zh/en 字典，按 `navigator.language` 回落；宿主若注入了可用的 `t` 则优先使用。
 
 ## 设计说明与来源
@@ -64,9 +68,10 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 | 组件 | 支持基线 |
 | --- | --- |
 | Node.js | >= 22.19 |
-| DSH | >= 0.1.5-rc.2 < 1.0.0 \|\| >= 0.2.0-rc.1 < 1.0.0（已在 0.1.5-rc.2 验证；0.2.x 已适配） |
+| DSH | >= 0.1.5-rc.2 < 1.0.0（槽位名、`slots.inject` / `register` 契约在 0.1.5-rc.2、0.2.0-rc.1、0.2.1-rc.5 上核对一致；实机验证：0.2.1-rc.5 桌面端） |
 | react | ^18.2.0（宿主提供） |
 | 界面 | `web`（`dsh.client.platform`） |
+| 渲染引擎 | Chromium 111+（仅「背景透明度」需要；0.2.1-rc.5 实测 Electron 44.7.0 / Chromium 152） |
 
 超出上表的组合未认证。
 
@@ -75,7 +80,7 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 优先用不可变 tag：
 
 ```sh
-dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.3.2
+dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.4.0
 ```
 
 跟踪开发分支（需要尚未发布的最新提交时用这个）：

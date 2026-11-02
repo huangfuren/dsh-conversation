@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Conversation outline panel for the DSH web surface: user questions (index, time, per-turn stats) as level-0 nodes with the assistant reply's Markdown headings hanging beneath them — level slider, search scope, bookmarks, copy/export, section jump, keyboard nav and reading-position memory. Read-only UI: it never touches prompts, messages, tool results or provider traffic, and it writes nothing outside its own localStorage keys.",
   "type": "module",
   "main": "index.js",

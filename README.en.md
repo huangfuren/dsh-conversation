@@ -12,10 +12,12 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 
 - **Pinned (default)** — a floating panel (`dsh-conv-panel`) titled "History · Outline".
   - **Three width tiers**: compact 320px → wide 480px → full 720px full-height, cycled from the title bar.
+  - **Left/right docking**: the title-bar dock button switches between docking to the left and to the right, resetting to the default position.
   - The title bar doubles as the drag handle (4px threshold, position persisted).
   - Tool row: expand/collapse all, bookmarks-only, **copy outline** (Markdown to clipboard), **export as .md**, search box with highlighted hits.
   - **Search scope**: the button left of the search box cycles all / questions / headings.
   - Level slider: 0 = questions only, 1–6 = open down to that heading level; dot tooltips show per-level counts.
+  - **Background opacity**: a slider at the bottom of the panel adjusts the background between 40% and 100% (default 100%, i.e. the old look). Only the background is dimmed — text stays fully opaque — and a backdrop blur kicks in as it gets more transparent. Click the percentage to go back to fully opaque, or double-click the slider. Useful when the panel covers the content you are reading.
   - Rows: collapse arrow, `Q1` badge, text, time, **this turn's "N tools / N chars" stats**, bookmark star; the row at the current reading position is softly highlighted and scrolled into view.
   - Footer: top / bottom, plus the **side-rail toggle**.
 - **Collapsed** — defaults to the **right-edge rail** (`dsh-conv-rail`): one tick per question, length normalised by that turn's text volume (effectively a conversation density map); hover shows a summary, click jumps to the turn, the icon at the top re-opens the panel. Turning the rail off falls back to the corner capsule (`dsh-conv-fab`) "History · Outline (N)".
@@ -23,7 +25,7 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 - **Keyboard** — with the panel focused, `Alt+↓` / `Alt+↑` move to the next / previous node; the listener is scoped to the panel and never steals host shortcuts.
 - **Reading position memory** — each session remembers the outline node you last looked at, and the panel lands there when you come back.
 - **Empty state** — "No outline content yet" until the session has questions or headings.
-- Persisted state: `pinned` / drag position / view tier / rail toggle / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
+- Persisted state: `pinned` / drag position / view tier / rail toggle / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
 
 ## How it works
 
@@ -34,8 +36,8 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 
 Client behaviour:
 
-1. Takes two required services via `inject: ["slots", "sessions"]`; if either is missing it warns and disables the panel.
-2. Registers `question-history` (`order: 100`) in the `shell.overlay` slot, passing `store` / `sessions` down instead of relying on face injection.
+1. Takes two required services via `inject: ["slots", "sessions"]`; the panel is disabled (with a warning) only when `slots.register` itself is missing.
+2. Registers `dsh-conversation` (`order: 100`) in the `conversation.session.header.actions` slot, passing `store` / `sessions` down instead of relying on face injection.
 3. `sessions.binding(id)` obtains the current session face and subscribes to `getSnapshot()` via `useSyncExternalStore`.
 4. `buildOutlineItems` flattens the snapshot into outline items: user/steering → level 0 (counting that turn's tools and text volume); assistant text blocks become level 1–6 by ATX heading (`^#{1,6}\s+`, `#` inside fenced code blocks skipped); streaming `partial` headings appear live with a breathing animation; non-prose nodes (tool-call / context) are counted but never enter the outline.
 5. `OutlineManager` owns level, search (with scope) and bookmark state, synced to `localStorage`; tree building, collapse restoration, visible-row flattening and reveal-on-locate are pure functions.
@@ -48,6 +50,8 @@ Client behaviour:
 
 - **Both snapshot contracts**: the new `snapshot.nodes[]` + `snapshot.partial`, and the legacy `snapshot.chat.{order, nodes(Map)}` + `node.data.content`. A shape mismatch yields an empty list, never an exception.
 - **Host API degradation**: the shapes of `slots` / `sessions` and the face's `getSnapshot` / `subscribe` are probed layer by layer; a rename or removal only makes this panel disappear, it never takes down other plugins in the same slot.
+- **Three-tier registration fallback**: the slot may be declared after the plugin loads, and the first `slots.register` throws `slot "…" is not declared` (0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 all throw it). The channel is therefore chosen from what the host actually exposes: ① `slots.inject` present → use the host contract; ② otherwise `slots.subscribeDeclaration` → subscribe to declaration events and register, which also recovers after a slot collapses and is re-declared; ③ neither → try immediately plus 700ms backoff (up to 12 attempts). Losing `inject` no longer makes the whole panel disappear. Duplicate registration is gated by `declarationEpoch`, so the same id never triggers `already has an entry`.
+- **Style capability probing**: background opacity relies on CSS `color-mix` (Chromium 111+). Where it is unsupported that row is not rendered and the panel stays fully opaque, instead of leaving a slider that does nothing.
 - **Bilingual copy**: the plugin ships its own zh/en dictionary and falls back by `navigator.language`; if the host injects a usable `t` that wins.
 
 ## Design notes and provenance
@@ -59,9 +63,10 @@ The **feature choices** here were informed by publicly described functionality a
 | Component | Supported baseline |
 | --- | --- |
 | Node.js | >= 22.19 |
-| DSH | >= 0.1.5-rc.2 < 1.0.0 (certified on 0.1.5-rc.2) |
+| DSH | >= 0.1.5-rc.2 < 1.0.0 (slot name and `slots.inject` / `register` contract checked against 0.1.5-rc.2, 0.2.0-rc.1 and 0.2.1-rc.5; on-device verification: 0.2.1-rc.5 desktop) |
 | react | ^18.2.0 (provided by the host) |
 | Surface | `web` (`dsh.client.platform`) |
+| Rendering engine | Chromium 111+ (only for "background opacity"; 0.2.1-rc.5 runs Electron 44.7.0 / Chromium 152) |
 
 Anything outside this table is unverified.
 
@@ -70,7 +75,7 @@ Anything outside this table is unverified.
 An immutable tag is preferred:
 
 ```sh
-dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.3.2
+dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.4.0
 ```
 
 Tracking the development branch (need a commit that is not released yet? use this):
