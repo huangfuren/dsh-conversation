@@ -80,8 +80,15 @@ function makeDomStub() {
   }
 }
 
-/** React 树桩：createElement 保留完整元素树（渲染形态断言用）。 */
+/** React 树桩：createElement 保留完整元素树（渲染形态断言用）。
+ *  Component 是 client.js 里 PanelBoundary 的基类；这里只要存在即可（本测试不渲染面板子树）。 */
+class Component {
+  constructor(props) { this.props = props || {}; this.state = {} }
+  setState(next) { this.state = Object.assign({}, this.state, typeof next === 'function' ? next(this.state, this.props) : next) }
+  render() { return null }
+}
 const reactTree = {
+  Component,
   createElement(type, props, ...children) {
     return { type, props: props ?? {}, children: children.length <= 1 ? (children[0] ?? null) : children }
   },
