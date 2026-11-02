@@ -441,6 +441,21 @@ test('placeholder uses the same persisted placement as the panel (drag position 
   assert.equal(placeholder.props.style.top, 40, 'placeholder must honour the persisted top')
 })
 
+test('placeholder carries the configured background opacity, so nothing snaps when data lands', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  const Placeholder = api.internals.HistoryOutlinePlaceholder
+  rec.resetRender()
+  const tree = Placeholder({ chrome: { pinned: true, view: 'panel', opacity: 60 }, side: 'right' })
+  const nodes = []
+  ;(function walk(n) { if (!n || typeof n !== 'object') return; nodes.push(n); const c = n.props && n.props.children; if (Array.isArray(c)) c.forEach(walk); else walk(c) })(tree)
+  const placeholder = nodes.find((n) => n.props && /dsh-conv-panel-pending/.test(String(n.props.className || '')))
+  assert.ok(placeholder, 'placeholder element must exist')
+  // 占位与真面板必须同源：只写定位的话 CSS 变量回落 100%，就绪瞬间会从不透明跳到设定值
+  assert.equal(placeholder.props.style['--dsh-conv-bg-alpha'], '60%')
+  assert.ok(parseFloat(placeholder.props.style['--dsh-conv-bg-blur']) > 0, 'dimmed placeholder blurs like the panel')
+})
+
 test('panelMountStateOf only defers mounting while the host service is waiting', () => {
   const { panelMountStateOf } = loadClient(makeRecordingReact().React).internals
   assert.equal(panelMountStateOf(undefined, false), 'mount', 'no host bridge: keep the legacy direct mount')

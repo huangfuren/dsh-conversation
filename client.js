@@ -883,6 +883,20 @@ window.__ModuleLoader__.load({
 				? { width: size.width, height: size.height, left: 16, top }
 				: { width: size.width, height: size.height, right: 16, top };
 		}
+		/**
+		 * 面板外壳样式 = 定位 + （宿主支持 color-mix 时）背景透明度变量。
+		 * 首屏占位与真面板必须走同一个函数：占位只写定位的话，变量回落 100%，
+		 * 就绪瞬间面板会从完全不透明「跳」到用户设定值。
+		 */
+		function panelSurfaceStyle(chrome, dockSide, alphaSupported) {
+			const placement = outlinePanelPlacement(chrome, dockSide);
+			if (alphaSupported !== true) return placement;
+			const opacity = normalizeOpacity(chrome === null || chrome === undefined ? undefined : chrome.opacity);
+			return Object.assign({
+				"--dsh-conv-bg-alpha": opacity + "%",
+				"--dsh-conv-bg-blur": ((OPACITY_MAX - opacity) / OPACITY_MAX * 6).toFixed(2) + "px",
+			}, placement);
+		}
 		const VIEW_ORDER = ["panel", "wide", "full"];
 		const REPO_URL = "https://github.com/huangfuren/dsh-conversation";
 		const MAX_USER_TEXT = 80;
@@ -3220,15 +3234,9 @@ window.__ModuleLoader__.load({
 			const panelOpacity = normalizeOpacity(chrome.opacity);
 			/* 同一帧只探测一次能力：既决定要不要渲染滑杆，也决定要不要写这两个变量。 */
 			const alphaSupported = supportsBackgroundAlpha();
-			const panelPlacement = outlinePanelPlacement(chrome, dockSide);
 			/* 透明度只作用于背景色：面板底色用 color-mix 掺透明，文字保持不透明，
 			   否则整块降 opacity 会连正文一起淡掉，反而更看不清。 */
-			const panelStyle = alphaSupported
-				? Object.assign({
-					"--dsh-conv-bg-alpha": panelOpacity + "%",
-					"--dsh-conv-bg-blur": ((OPACITY_MAX - panelOpacity) / OPACITY_MAX * 6).toFixed(2) + "px",
-				}, panelPlacement)
-				: panelPlacement;
+			const panelStyle = panelSurfaceStyle(chrome, dockSide, alphaSupported);
 
 			const allExpanded = state !== undefined && state.isAllExpanded === true;
 			const bookmarkMode = state !== undefined && state.bookmarkMode === true;
@@ -3484,8 +3492,9 @@ window.__ModuleLoader__.load({
 			const safeProps = props === undefined || props === null ? {} : props;
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
 			const side = safeProps.side === "left" ? "left" : "right";
-			// 与真正面板共用同一套定位：拖拽位置 / 视图档位都会被尊重（review suggestion 2）。
-			const style = outlinePanelPlacement(safeProps.chrome, side);
+			// 与真正面板共用同一套外壳样式：定位（拖拽位置 / 视图档位）与背景透明度都一致，
+			// 否则就绪的一瞬间面板会从 100% 不透明跳到用户设定值。
+			const style = panelSurfaceStyle(safeProps.chrome, side, supportsBackgroundAlpha());
 			return h("div", {
 				className: "dsh-conv-panel dsh-conv-panel-pending",
 				style,
@@ -3688,6 +3697,7 @@ window.__ModuleLoader__.load({
 			buildOutlineItems,
 			conversationNodesOf,
 			normalizeOpacity,
+			panelSurfaceStyle,
 			resolveSlotChannel,
 			HistoryOutlinePanelInner,
 			HistoryOutlineSlot,

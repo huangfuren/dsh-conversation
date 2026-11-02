@@ -72,6 +72,13 @@
     超时 / 就绪）；未就绪时只出现占位、不出现面板空态；从未就绪切到就绪时槽位组件**自身**的 hook 序列
     不变（断言里按 depth 把子组件 hook 排除）。
 
+- **首屏占位沿用面板的背景透明度。** 之前占位外壳只复用面板的定位（`outlinePanelPlacement`），没写
+  `--dsh-conv-bg-alpha` / `--dsh-conv-bg-blur`，CSS 里这两个变量缺省回落 100% ⇒ 把透明度拉到 40%
+  再刷新时，占位窗口（最长 2 秒）恒为完全不透明，会话就绪的瞬间会「跳」到设定值。现在定位与透明度
+  收进同一个 `panelSurfaceStyle()`，占位与真面板共用，外观从第一帧起一致。回归：
+  `test/host-service.test.js` 新增「占位携带设定透明度」；`test/client.test.js` 覆盖
+  `panelSurfaceStyle` 的三条分支（支持 / 不支持 color-mix 时只留定位 / 脏 chrome 回落 100% + 默认停靠位）。
+
 
 ## [1.4.0] - 2026-11-02
 

@@ -116,11 +116,29 @@ test('internals export list covers helpers, components and test seams', () => {
   assert.deepEqual(Object.keys(api.internals).sort(), [
       'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'buildOutlineItems',
       'conversationNodesOf', 'createHostBridge', 'mainSessionIdOf', 'makeSessionBindingSelector',
-      'normalizeOpacity', 'panelMountStateOf', 'probeDomContract', 'readHostService',
+      'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'probeDomContract', 'readHostService',
       'reportDomContractOnce', 'reportSnapshotShapeOnce', 'resetDiagnostics', 'resolveSlotChannel',
       'safeNodesOf', 'snapshotRows', 'snapshotShapeOf', 'snapshotSourceOf', 'textBlocks', 'userText',
     ])
   for (const [name, fn] of Object.entries(api.internals)) assert.equal(typeof fn, 'function', `${name} must be a function`)
+})
+
+test('panelSurfaceStyle keeps placement and opacity in one place', () => {
+  const { panelSurfaceStyle } = api.internals
+  const chrome = { view: 'full', left: 120, top: 40, opacity: 65 }
+  const dim = panelSurfaceStyle(chrome, 'right', true)
+  assert.equal(dim['--dsh-conv-bg-alpha'], '65%')
+  assert.ok(parseFloat(dim['--dsh-conv-bg-blur']) > 0)
+  // 定位字段必须原样保留：占位与真面板共用这个函数
+  assert.equal(dim.left, 120)
+  assert.equal(dim.top, 40)
+
+  const plain = panelSurfaceStyle(chrome, 'right', false)
+  assert.equal(plain['--dsh-conv-bg-alpha'], undefined, 'unsupported engine: do not emit a variable it will drop')
+  assert.equal(plain.left, 120, 'placement must survive the unsupported branch')
+  // 脏 chrome（宿主 props 为空）不能抛，且回落完全不透明 + 默认停靠位
+  assert.equal(panelSurfaceStyle(undefined, 'left', true)['--dsh-conv-bg-alpha'], '100%')
+  assert.equal(panelSurfaceStyle(undefined, 'left', true).left, 16)
 })
 
 test('normalizeOpacity clamps, snaps and defaults to fully opaque', () => {
