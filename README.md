@@ -25,9 +25,8 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 - **键盘**：面板聚焦时 `Alt+↓ / Alt+↑` 跳到下一个 / 上一个节点（只在面板内监听，不抢宿主按键）。
 - **阅读位置记忆**：每个会话记录上次看到的大纲节点，切回来时面板直接落在那里。
 - **空态**：会话里还没有提问/标题时显示「暂无大纲内容」。
-- **首屏占位**：刷新后宿主会话/chat 数据尚未就绪时，先在面板位置显示占位「正在读取会话…」，就绪后才挂载面板（不再先闪一下空态）；宿主超过 2 秒仍未给出会话绑定就照常挂载并展示空态。
+- **首屏占位**：刷新后宿主会话/chat 数据尚未就绪时，先在面板位置显示占位「正在读取会话…」，会话绑定就绪后才挂载面板；若绑定先到、chat 快照稍后写入，面板可能先渲染一次空态，下一次快照更新即补上；宿主超过 2 秒仍未给出会话绑定就照常挂载并展示空态。
 - **标题栏按钮自适应（icon-only）**：右栏展开、标题栏变窄时，标题栏里的「大纲」按钮自动收成纯图标（与宿主原生按钮同机制：同一容器查询 `@container (width<=540px)`、同一容器 `.wSkVaW_titleRow`），按钮真实收窄且 `aria-label` / `title` 保留、可点击、可键盘聚焦；右栏收起后自动还原。旧版宿主无该容器 ⇒ 保持宽态（降级安全）。
-- 状态持久化：`pinned` / 拖拽位置 / 视图档位 / 刻度条开关 / 默认展开层级 / 每会话收藏 / 每会话阅读位置，全部走 `localStorage`（键前缀 `dsh-conversation:`）。
 - 状态持久化：`pinned` / 拖拽位置 / 视图档位 / 刻度条开关 / 面板背景不透明度 / 默认展开层级 / 每会话收藏 / 每会话阅读位置，全部走 `localStorage`（键前缀 `dsh-conversation:`）。
 
 ## 实现方式
@@ -54,8 +53,7 @@ Web 端「会话大纲」插件：在页面右上角贡献一个浮动面板，�
 - **快照契约双支持**：新结构 `snapshot.nodes[]` + `snapshot.partial`；旧结构 `snapshot.chat.{order, nodes(Map)}` + `node.data.content`。结构不符时返回空列表而不是抛错。
 - **槽位数据源加固**：`conversation.session.header.actions` 的 owner props 可能为空（dsh 0.2.0-rc.2 即以 `renderSlot(..., {})` 渲染），第三方 header（如 `dsh-better-sidebar`）接管 header 区时 props 形状也可能不同。面板优先用 slot props 注入的 hook，缺失时改读 `uiSession.current` 的 `hooks.chat` / `hooks.session`；两条路都拿不到就渲染空态，不会让槽位崩溃。
 - **宿主 API 降级**：`slots` / `sessions` / `uiSession` 的形状、store 的 `getSnapshot` / `subscribe` 都逐层探测并吞掉异常；任一改名或缺失只让本面板降级为空态，不会拖垮同槽位的其它插件。
-- **一次性兼容性诊断**：首次拿到有内容的快照时用一条 `console.info` 记录实际结构（`legacy.nodes` / `nodes` / `chat.order` …）与行数；结构无法识别时 `console.warn` 列出实际键名。首次渲染出大纲时探测 DOM 契约（`data-conversation-scroll` / `data-chat-flow-kind` / 锚点属性），缺失或改名时 `console.warn` 说明已降级为「按文本顺序匹配」。两类日志每次页面加载最多各一条，不改变任何容错行为。
-- **宿主 API 降级**：`slots` / `sessions` 的形状、face 的 `getSnapshot` / `subscribe` 都逐层探测；任一改名或缺失只让本面板消失，不会拖垮同槽位的其它插件。
+- **一次性兼容性诊断**：首次拿到可识别的快照（0 行也记录）时用一条 `console.info` 记录实际结构（`legacy.nodes` / `nodes` / `chat.order` …）与行数；结构无法识别时 `console.warn` 列出实际键名。首次渲染出大纲时探测 DOM 契约（`data-conversation-scroll` / `data-chat-flow-kind` / 锚点属性），缺失或改名时 `console.warn` 说明已降级为「按文本顺序匹配」。两类日志每次页面加载最多各一条，不改变任何容错行为。
 - **注册通道三层兜底**：槽位声明可能晚于插件装载，首次 `slots.register` 会抛 `slot "…" is not declared`（0.1.5-rc.2 / 0.2.0-rc.1 / 0.2.1-rc.5 三版都会这样抛）。因此按宿主实际能力选通道：① `slots.inject` 存在 → 沿用宿主契约；② 否则 `slots.subscribeDeclaration` 存在 → 订阅声明事件后注册，槽位塌缩重建也能自动恢复；③ 都没有 → 立即尝试 + 700ms 退避重试（≤12 次）。`inject` 消失不再导致面板整块消失。重复注册由 `declarationEpoch` 把关，避免同 id 触发 `already has an entry`。
 - **样式能力探测**：背景透明度依赖 CSS `color-mix`（Chromium 111+）。宿主不支持时该行不渲染、面板保持完全不透明，不会留下「拖了没反应」的死控件。
 - **文案双语**：自带 zh/en 字典，按 `navigator.language` 回落；宿主若注入了可用的 `t` 则优先使用。

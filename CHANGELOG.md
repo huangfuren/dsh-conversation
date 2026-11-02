@@ -15,9 +15,8 @@
   `container-type: inline-size` 的 `.wSkVaW_titleRow`，阈值同为 540px）⇒ 右栏展开（titleRow ≤ 540px）
   时文字隐藏、按钮**真实收窄**为图标宽（glyph + padding），与原生按钮同帧收起/还原；span 保持
   挂载（与原生 label 同款处理），`aria-label` / `title` / `type=button` 不受影响，可点击、可键盘聚焦。
-  判定来源与原生逐字符一致（非自造测量、无 JS 状态）；宿主无该容器的旧版本 ⇒ 查询不命中 ⇒
-  保持宽态（降级安全，与原生行为一致）。新增判据 `test/icon-only.test.js`：来源一致性（条件与
-  原生逐字符相等）、选择器对位、两态布局模拟（宽度由解析产物 CSS 驱动，窄态 < 全宽 60%）、
+  判定条件与原生阈值（540px）相同（比较时归一空白；阈值取自宿主源码并由测试锁定该常量；宿主改阈值时测试不会自动发现）；宿主无该容器的旧版本 ⇒ 查询不命中 ⇒
+  保持宽态（降级安全，与原生行为一致）。新增判据 `test/icon-only.test.js`：来源一致性（条件归一空白后与原生相等）、选择器对位、两态布局模拟（宽度由解析产物 CSS 驱动，窄态 < 全宽 60%）、
   降级断言，及 2 组变异自证。
 
 - **一次性兼容性诊断日志（快照形状 + 宿主 DOM 契约）。**
@@ -25,7 +24,7 @@
     `data-chat-flow-kind` / `data-conversation-scroll`）和会话快照结构（`legacy.nodes` / `nodes` /
     `chat.{order,nodes}` …）都做多候选兼容，但降级是**静默**的：宿主改名后用户只看到「点了不跳」或
     「面板空着」，控制台没有任何可排查的线索，也无从判断当前用的是哪一代契约。
-  - 现在的行为：首次拿到有内容的快照时打印一条 `console.info`，记录实际结构与本轮行数
+  - 现在的行为：首次拿到可识别的快照（0 行也记录）时打印一条 `console.info`，记录实际结构与本轮行数
     （例如 `session snapshot shape: legacy.nodes (12 rows)`）；结构陌生但明显像 ChatSnapshot 时打印一条
     `console.warn` 并列出实际键名。首次渲染出大纲时探测 DOM 契约：齐全打一条 info；缺失/改名打一条
     warn，明确写出缺哪些属性、以及已降级为「按文本顺序匹配」而不是「按 key 精确定位」。
@@ -36,6 +35,13 @@
 
 ### Fixed
 
+- **修 props hook 路径的无限重渲染（legacy `chat.{order,nodes}` 快照）。** 新增服务路径后，
+  节点 hook 先取原始快照、再在 hook 外做 `safeNodesOf` 归一；对 `chat.{order,nodes(Map)}` 这类旧
+  契约每次归一都会分配新数组，`activeNodes` / `items` 身份每轮变化，面板既有的 `bump()` effect
+  因此无限重渲染（真实 React：`Maximum update depth exceeded`）。现在用 identity 选择器 + `useMemo`
+  按原始快照身份缓存归一结果；同时把槽位组件新增 hook 移到提前 return 之前（store 由缺席变存在时
+  hook 数量恒定）。回归：`harness2` 新增 legacy 形状用例，修复前无限循环、修复后 9/9 无崩溃。
+
 - **槽位 props 为空时不再「永远空态」：面板改从宿主服务（`sessions` / `uiSession`）取当前会话快照。**
   - 之前的行为：面板只从 slot props 的 `useChat` / `useSession` / `useSessions` 取数据。宿主在
     `conversation.session.header.actions` 上以 `renderSlot(..., {})` 渲染（dsh 0.2.0-rc.2 的
@@ -44,7 +50,7 @@
     「暂无大纲内容」，而顶部「大纲」按钮看起来一切正常，用户没有任何可排查的线索。
   - 现在的行为：`apply()` 把 cordis 的 `sessions` / `uiSession` 服务捕获进插件私有的 host bridge
     （经 `ctx.reflect.get(name, false)` 只读探测，缺失/抛错都降级为 `undefined`），槽位包装器把
-    `store` / `host` **最后**合并进 props。面板优先用 slot props 的 hook（旧宿主行为不变），缺失时读
+    `store` / `host` **最后**合并进 props。面板优先用 slot props 的 hook（props 存在时仍以 props 为准），缺失时读
     `uiSession.current` 的 `hooks.chat`（ChatSnapshot）与 `hooks.session`（`hasMore` / `loadOlder`）；
     两条路的结果都经 `conversationNodesOf` 归一 + `Array.isArray` 兜底。服务缺失或抛错时只渲染空态，
     槽位按钮在任何情况下都保留。空 props 下的收藏 / 阅读位置也从 `default-session` 改为真实会话 id。
@@ -59,9 +65,9 @@
     `useSyncExternalStore` 订阅，再由自身 effect 的 `bump()` 触发第二轮渲染 —— 这既是 1.3.1 崩溃的触发
     窗口，也表现为「刷新时面板先空一下再出内容」的闪动。
   - 现在的行为：槽位组件先用服务路径判断会话绑定是否就绪（`panelMountStateOf`）。未就绪时只渲染同位置
-    的占位外壳（「正在读取会话…」，`role="status"` + `aria-busy="true"`），就绪后才挂载面板组件；最长
+    的占位外壳（「正在读取会话…」，`role="status"` + `aria-busy="true"`），会话绑定就绪后才挂载面板组件（若绑定先到、chat 快照稍后写入，面板可能先以空态渲染一次，下一次快照更新即补上）；最长
     等 2 秒（`PANEL_READY_TIMEOUT_MS`），超时仍照常挂载并展示空态，避免宿主某版本不再 retain 会话时
-    永远停在占位。宿主没有提供服务（旧宿主 / 独立渲染）时保持 1.3.1 的直接挂载。
+    永远停在占位。没有可读服务源（旧宿主 / 独立渲染）时保持 1.3.1 的直接挂载；仅有 sessions.binding 而无 list/current 的宿主会按未就绪处理（最多 2 秒占位）。
   - 回归判据：`test/host-service.test.js` 新增 3 条 —— `panelMountStateOf` 的状态矩阵（无服务 / 未就绪 /
     超时 / 就绪）；未就绪时只出现占位、不出现面板空态；从未就绪切到就绪时槽位组件**自身**的 hook 序列
     不变（断言里按 depth 把子组件 hook 排除）。
