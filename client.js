@@ -133,6 +133,11 @@ window.__ModuleLoader__.load({
         height: min(75vh, calc(100vh - 100px));
         pointer-events: auto;
         background: var(--dsw-alias-bg-layer-1, #fff);
+        /* 透明度用 color-mix 掺在底色上，而不是给整块加 opacity——后者会把正文一起淡掉。
+           color-mix 不被支持时这一行在解析阶段就被丢弃，自动回落到上面那行纯色。 */
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
+        -webkit-backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
+        backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 12px;
         box-shadow: 0 1px 2px rgba(15, 17, 21, 0.04), 0 8px 28px rgba(15, 17, 21, 0.1);
@@ -184,6 +189,7 @@ window.__ModuleLoader__.load({
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 4px;
         background: var(--dsw-alias-bg-layer-1, #fff);
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
         color: var(--dsw-alias-label-secondary, #3c3d43);
         font-size: 11px;
         cursor: pointer;
@@ -267,6 +273,7 @@ window.__ModuleLoader__.load({
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 8px;
         background: var(--dsw-alias-bg-base, #fff);
+        background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
         color: var(--dsw-alias-label-primary, #0f1115);
         font-size: 13px;
         font-family: inherit;
@@ -365,6 +372,52 @@ window.__ModuleLoader__.load({
         font-variant-numeric: tabular-nums;
         color: var(--dsw-alias-label-tertiary, #65666b);
       }
+      .dsh-conv-appearance {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px 8px;
+        flex-shrink: 0;
+        color: var(--dsw-alias-label-tertiary, #65666b);
+      }
+      .dsh-conv-appearance-glyph {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        color: var(--dsw-alias-label-caption, #adb2b8);
+      }
+      .dsh-conv-appearance-glyph > svg { width: 13px; height: 13px; }
+      .dsh-conv-opacity {
+        flex: 1;
+        min-width: 0;
+        height: 16px;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        accent-color: var(--dsw-alias-state-business-primary, #4176e6);
+        cursor: pointer;
+      }
+      .dsh-conv-opacitylabel {
+        flex: none;
+        min-width: 40px;
+        height: 20px;
+        padding: 0 4px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--dsw-alias-label-tertiary, #65666b);
+        font-family: inherit;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        cursor: pointer;
+        transition: background-color 0.15s ease, color 0.15s ease;
+      }
+      .dsh-conv-opacitylabel:hover {
+        background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06));
+        color: var(--dsw-alias-label-primary, #0f1115);
+      }
+      .dsh-conv-opacitylabel-max { color: var(--dsw-alias-label-caption, #adb2b8); }
       .dsh-conv-list {
         flex: 1;
         min-height: 80px;
@@ -525,6 +578,7 @@ window.__ModuleLoader__.load({
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 8px;
         background: var(--dsw-alias-bg-layer-1, #fff);
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
         color: var(--dsw-alias-label-secondary, #3c3d43);
         font-size: 13px;
         font-family: inherit;
@@ -545,6 +599,7 @@ window.__ModuleLoader__.load({
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 8px;
         background: var(--dsw-alias-bg-layer-1, #fff);
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
         box-shadow: 0 4px 16px rgba(15, 17, 21, 0.12);
         color: var(--dsw-alias-label-secondary, #3c3d43);
         font-size: 13px;
@@ -819,6 +874,9 @@ window.__ModuleLoader__.load({
 			"history.loading": "加载中…",
 			"panel.dockLeft": "靠左停靠",
 			"panel.dockRight": "靠右停靠",
+			"appearance.opacity": "面板透明度",
+			"appearance.opacityTooltip": "拖动调整面板背景透明度；点右侧百分比恢复 100%",
+			"appearance.reset": "恢复完全不透明",
 		};
 		const EN = {
 			"panel.title": "Questions · Outline",
@@ -861,6 +919,9 @@ window.__ModuleLoader__.load({
 			"history.loading": "Loading…",
 			"panel.dockLeft": "Dock to left",
 			"panel.dockRight": "Dock to right",
+			"appearance.opacity": "Panel opacity",
+			"appearance.opacityTooltip": "Drag to adjust the panel background opacity; click the percentage to reset to 100%",
+			"appearance.reset": "Reset to fully opaque",
 		};
 
 		function preferredLang() {
@@ -1662,6 +1723,33 @@ window.__ModuleLoader__.load({
 		const BOOKMARKS_CAP = 200;
 		const POS_PREFIX = "dsh-conversation:pos:";
 
+		/* 面板背景不透明度（百分比）。100 = 完全不透明，也就是旧版本的观感；
+		   下限压到 40：再低正文对比度就崩了，不如不给这一档。 */
+		const OPACITY_MIN = 40;
+		const OPACITY_MAX = 100;
+		const OPACITY_STEP = 5;
+
+		function normalizeOpacity(value) {
+			if (typeof value !== "number" || Number.isFinite(value) === false) return OPACITY_MAX;
+			const clamped = Math.min(OPACITY_MAX, Math.max(OPACITY_MIN, value));
+			return Math.round(clamped / OPACITY_STEP) * OPACITY_STEP;
+		}
+
+		/**
+		 * 宿主能否混出半透明底色。DSH 桌面端跑 Electron，Chromium 111+ 才有 color-mix；
+		 * 更老的宿主上该声明会被整行丢弃、底色恒为纯色，此时滑杆拖了没有效果——
+		 * 与其留一个「拖了没反应」的控件，不如整行不渲染。
+		 * 取不到 CSS.supports（非浏览器环境、单测）时按支持处理，避免误伤。
+		 */
+		function supportsBackgroundAlpha() {
+			try {
+				if (typeof CSS === "undefined" || CSS === null || typeof CSS.supports !== "function") return true;
+				return CSS.supports("background", "color-mix(in srgb, #fff 50%, transparent)") === true;
+			} catch (e) {
+				return true;
+			}
+		}
+
 		function readJson(key) {
 			try {
 				const raw = window.localStorage.getItem(key);
@@ -1691,6 +1779,8 @@ window.__ModuleLoader__.load({
 				view: VIEW_ORDER.indexOf(picked.view) === -1 ? "panel" : picked.view,
 				// 面板收起时是否显示右侧刻度条（关掉则回落为原来的胶囊按钮）。
 				rail: picked.rail === undefined ? true : picked.rail === true,
+				// 面板背景不透明度；老用户没有这个字段，归一化后落到 100，观感不变。
+				opacity: normalizeOpacity(picked.opacity),
 			};
 			const listeners = new Set();
 			return {
@@ -1773,6 +1863,20 @@ window.__ModuleLoader__.load({
 		function OutlineGlyph() {
 			return h("svg", { width: "15", height: "15", viewBox: "0 0 14 14", fill: "none", "aria-hidden": "true" },
 				h("path", { d: "M2 3.5h10M2 7h6.5M2 10.5h8.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+		}
+
+		function OpacityGlyph() {
+			return h("svg", {
+				viewBox: "0 0 16 16",
+				width: 13,
+				height: 13,
+				fill: "none",
+				stroke: "currentColor",
+				strokeWidth: 1.4,
+				"aria-hidden": true,
+			},
+				h("circle", { cx: 8, cy: 8, r: 6 }),
+				h("path", { d: "M8 2 A6 6 0 0 0 8 14 Z", fill: "currentColor", stroke: "none" }));
 		}
 
 		function DockSideGlyph(props) {
@@ -1970,6 +2074,43 @@ window.__ModuleLoader__.load({
 					dots),
 				h("span", { className: "dsh-conv-sliderlabel" },
 					props.expandLevel === 0 ? props.t("level.zero") : "H" + props.expandLevel));
+		}
+
+		/**
+		 * 面板背景透明度控件：滑杆 + 百分比读数。
+		 * 点百分比回到 100%（完全不透明）；双击滑杆也一样，供不习惯点数字的人用。
+		 */
+		function OpacityControl(props) {
+			stg("child:OpacityControl");
+			const value = normalizeOpacity(props.value);
+			return h("div", { className: "dsh-conv-appearance" },
+				h("span", {
+					className: "dsh-conv-appearance-glyph",
+					title: props.t("appearance.opacityTooltip"),
+					"aria-hidden": "true",
+				}, h(OpacityGlyph)),
+				h("input", {
+					className: "dsh-conv-opacity",
+					type: "range",
+					min: OPACITY_MIN,
+					max: OPACITY_MAX,
+					step: OPACITY_STEP,
+					value,
+					title: props.t("appearance.opacityTooltip"),
+					"aria-label": props.t("appearance.opacity"),
+					"aria-valuetext": value + "%",
+					onChange: (e) => props.onChange(Number(e.target.value)),
+					onDoubleClick: () => props.onChange(OPACITY_MAX),
+				}),
+				h("button", {
+					type: "button",
+					className: value === OPACITY_MAX
+						? "dsh-conv-opacitylabel dsh-conv-opacitylabel-max"
+						: "dsh-conv-opacitylabel",
+					title: props.t("appearance.reset"),
+					"aria-label": props.t("appearance.opacity") + " " + value + "%",
+					onClick: () => props.onChange(OPACITY_MAX),
+				}, value + "%"));
 		}
 
 		function HighlightText(props) {
@@ -2511,11 +2652,22 @@ window.__ModuleLoader__.load({
 				store.set({ left: undefined, top: undefined });
 			}, [dockSide, store]);
 
-			const panelStyle = typeof chrome.left === "number" && typeof chrome.top === "number"
+			const panelOpacity = normalizeOpacity(chrome.opacity);
+			/* 同一帧只探测一次能力：既决定要不要渲染滑杆，也决定要不要写这两个变量。 */
+			const alphaSupported = supportsBackgroundAlpha();
+			const panelPlacement = typeof chrome.left === "number" && typeof chrome.top === "number"
 				? { width: size.width, height: size.height, left: chrome.left, top: chrome.top }
 				: (dockSide === "left"
 					? { width: size.width, height: size.height, left: 16, top: chrome.view === "full" ? 28 : 72 }
 					: { width: size.width, height: size.height, right: 16, top: chrome.view === "full" ? 28 : 72 });
+			/* 透明度只作用于背景色：面板底色用 color-mix 掺透明，文字保持不透明，
+			   否则整块降 opacity 会连正文一起淡掉，反而更看不清。 */
+			const panelStyle = alphaSupported
+				? Object.assign({
+					"--dsh-conv-bg-alpha": panelOpacity + "%",
+					"--dsh-conv-bg-blur": ((OPACITY_MAX - panelOpacity) / OPACITY_MAX * 6).toFixed(2) + "px",
+				}, panelPlacement)
+				: panelPlacement;
 
 			const allExpanded = state !== undefined && state.isAllExpanded === true;
 			const bookmarkMode = state !== undefined && state.bookmarkMode === true;
@@ -2682,6 +2834,13 @@ window.__ModuleLoader__.load({
 					onChange: (level) => { if (manager !== null) manager.setLevel(level); },
 					t,
 				}),
+				alphaSupported
+					? h(OpacityControl, {
+						value: panelOpacity,
+						onChange: (next) => store.set({ opacity: normalizeOpacity(next) }),
+						t,
+					})
+					: null,
 				h("div", { className: "dsh-conv-list", ref: listRef }, listChildren),
 				h("div", { className: "dsh-conv-footer" },
 					h("button", {
@@ -2799,6 +2958,21 @@ window.__ModuleLoader__.load({
 			]);
 		}
 
+		/**
+		 * 判定宿主提供哪条槽位注册通道。三条通道都能把条目挂上去，区别在契约来源：
+		 * - inject：宿主核心的公开契约（官方插件指南里的 `ctx.slots.inject(owner, cb)`）。
+		 * - declaration：slots 包自己导出的声明生命周期事件 `subscribeDeclaration(key, fn)`。
+		 * - register：两者都没有时，只能"注册失败就退避重试"。
+		 * @param {object} slots ctx.slots
+		 * @returns {"inject"|"declaration"|"register"}
+		 */
+		function resolveSlotChannel(slots) {
+			if (slots === null || typeof slots !== "object") return "register";
+			if (typeof slots.inject === "function") return "inject";
+			if (typeof slots.subscribeDeclaration === "function") return "declaration";
+			return "register";
+		}
+
 		/** 客户端插件所需服务：槽位注册表与会话 face。 */
 		const inject = ["slots", "sessions"];
 
@@ -2808,8 +2982,10 @@ window.__ModuleLoader__.load({
 		 */
 		function apply(ctx) {
 			try {
-				if (typeof ctx.slots !== "object" || typeof ctx.slots.inject !== "function" || typeof ctx.slots.register !== "function") {
-					console.warn("[conversation] slots API changed; panel disabled");
+				/* 只依赖 register：inject 或 subscribeDeclaration 任一存在就能工作，
+				   两者都没有也还有退避重试，不该整块禁用面板。 */
+				if (ctx.slots === null || typeof ctx.slots !== "object" || typeof ctx.slots.register !== "function") {
+					console.warn("[conversation] slots.register missing; panel disabled");
 					return;
 				}
 				const store = createChromeStore();
@@ -2818,17 +2994,33 @@ window.__ModuleLoader__.load({
 				const entryOpts = { name: SLOT, id: "dsh-conversation", order: 100, label: "大纲" };
 				const entryComp = (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }));
 
+				const slots = ctx.slots;
+				const channel = resolveSlotChannel(slots);
+				/* 声明 epoch：创建与塌缩各推进一次。用它分辨"我们的条目仍然在"与
+				   "槽位塌了又重建"——同一个 id 重复注册会直接抛 already has an entry。 */
+				const epochOf = typeof slots.declarationEpoch === "function"
+					? () => {
+						try {
+							return slots.declarationEpoch(SLOT);
+						} catch (e1) {
+							return -1;
+						}
+					}
+					: null;
+
 				/* 槽位是延迟声明的：第一次 register 会报 "is not declared"，等父条目的
 				   children 表落地后再注册即可，所以这里做幂等重试。 */
 				let registered = false;
+				let registeredEpoch = -1;
 				let regTries = 0;
 				let regTimer = null;
 				const tryRegister = () => {
 					if (registered) return;
 					regTries += 1;
 					try {
-						ctx.slots.register(entryOpts, entryComp);
+						slots.register(entryOpts, entryComp);
 						registered = true;
+						registeredEpoch = epochOf === null ? -1 : epochOf();
 						if (regTimer) { clearTimeout(regTimer); regTimer = null; }
 					} catch (e0) {
 						const msg = e0 && e0.message ? e0.message : String(e0);
@@ -2839,15 +3031,34 @@ window.__ModuleLoader__.load({
 						}
 					}
 				};
+
+				/* 声明通知里重新置位：塌缩后我们的条目已被宿主丢弃，
+				   只有再次 register 才能回到工具条上。 */
+				const onDeclared = () => {
+					const epoch = epochOf === null ? -1 : epochOf();
+					if (registered && (epochOf === null || epoch === registeredEpoch)) return;
+					registered = false;
+					regTries = 0;
+					tryRegister();
+				};
+
 				tryRegister();
 
-				try {
-					ctx.slots.inject(SLOT, () => {
-						tryRegister();
-						return () => {};
-					});
-				} catch (e4) {
-					console.warn("[conversation] slot inject failed: " + (e4 && e4.message ? e4.message : e4));
+				if (channel === "inject") {
+					try {
+						slots.inject(SLOT, () => {
+							tryRegister();
+							return () => {};
+						});
+					} catch (e4) {
+						console.warn("[conversation] slot inject failed: " + (e4 && e4.message ? e4.message : e4));
+					}
+				} else if (channel === "declaration") {
+					try {
+						slots.subscribeDeclaration(SLOT, onDeclared);
+					} catch (e5) {
+						console.warn("[conversation] slot subscribeDeclaration failed: " + (e5 && e5.message ? e5.message : e5));
+					}
 				}
 			} catch (err) {
 				console.warn("[conversation] init failed; panel disabled: " + (err && err.message ? err.message : err));
@@ -2862,6 +3073,8 @@ window.__ModuleLoader__.load({
 			userText,
 			buildOutlineItems,
 			conversationNodesOf,
+			normalizeOpacity,
+			resolveSlotChannel,
 		});
 		return module.exports;
 	}

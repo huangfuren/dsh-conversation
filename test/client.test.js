@@ -114,9 +114,28 @@ test('loader contract: id, exports and declared services', () => {
 
 test('internals expose exactly the pure helpers', () => {
   assert.deepEqual(Object.keys(api.internals).sort(), [
-    'buildOutlineItems', 'conversationNodesOf', 'snapshotRows', 'textBlocks', 'userText',
+    'buildOutlineItems', 'conversationNodesOf', 'normalizeOpacity', 'resolveSlotChannel',
+    'snapshotRows', 'textBlocks', 'userText',
   ])
   for (const [name, fn] of Object.entries(api.internals)) assert.equal(typeof fn, 'function', `${name} must be a function`)
+})
+
+test('normalizeOpacity clamps, snaps and defaults to fully opaque', () => {
+  const { normalizeOpacity } = api.internals
+  // 缺省/脏数据一律回到 100 —— 老用户的 chrome 快照里没有 opacity 字段
+  assert.equal(normalizeOpacity(undefined), 100)
+  assert.equal(normalizeOpacity(null), 100)
+  assert.equal(normalizeOpacity(NaN), 100)
+  assert.equal(normalizeOpacity('80'), 100, '字符串不猜，按缺省处理')
+  // 越界夹到 [40, 100]
+  assert.equal(normalizeOpacity(0), 40)
+  assert.equal(normalizeOpacity(-20), 40)
+  assert.equal(normalizeOpacity(240), 100)
+  // 吸附到 5 的倍数：滑杆 step=5,持久化值必须与滑杆能停的位置一致
+  assert.equal(normalizeOpacity(72), 70)
+  assert.equal(normalizeOpacity(73), 75)
+  assert.equal(normalizeOpacity(100), 100)
+  assert.equal(normalizeOpacity(40), 40)
 })
 
 test('snapshotRows normalises every session-snapshot shape dsh has used', () => {
