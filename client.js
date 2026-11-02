@@ -16,6 +16,8 @@
  * - 不依赖宿主 i18n 命名空间（原 hqst 也没有）：宿主若注入了可用的 `t`
  *   就优先用它，否则按 navigator.language 在自带 zh/en 字典间回落。
  */
+/* 排查期结束：不再往页面里插调试红框，线索一律走 console。 */
+
 window.__ModuleLoader__.load({
 	id: "dsh-conversation",
 	factory: (require) => {
@@ -29,6 +31,72 @@ window.__ModuleLoader__.load({
 		const {
 			useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore,
 		} = React;
+
+		/* 诊断兜底：宿主 React 若没有 useSyncExternalStore，用 useState/useEffect 等价实现 */
+		const useSyncExternalStoreSafe = typeof useSyncExternalStore === "function"
+			? useSyncExternalStore
+			: function (subscribe, getSnapshot) {
+				const [value, setValue] = useState(getSnapshot);
+				useEffect(() => {
+					const unsub = subscribe(() => setValue(getSnapshot()));
+					setValue(getSnapshot());
+					return typeof unsub === "function" ? unsub : undefined;
+				}, [subscribe, getSnapshot]);
+				return value;
+			};
+		/* 诊断开关：先只渲染按钮、暂不渲染展开面板，用来判断异常是否来自面板 */
+		const DIAG_NO_PANEL = false;
+
+		/* 诊断：渲染阶段标记。边界捕获异常时读取最后一次到达的位置，直接定位崩点 */
+		function stg(name) { try { window.__dshStage = name; } catch (e) {} }
+
+		/* 稳定钩子：宿主 props 在不同渲染间可能新增/移除 hook 工厂，
+		   若直接条件调用会导致 hook 顺序漂移（表现为 useMemo 读取上一轮槽位拿到
+		   非数组，抛 "reading 'length'"）。这里用等价的占位钩子把数量钉死。 */
+		const EMPTY_NODES = [];
+		function useNoSession(selector) { return useState(undefined)[0]; }
+		function useNoNodes(selector) { useState(0); return EMPTY_NODES; }
+		/* selector 必须是模块级稳定引用：每轮 new 一个会让 useSyncExternalStore 反复比对 */
+		const SEL_HAS_MORE = (s) => (s !== null && s !== undefined && s.hasMore === true);
+		const SEL_LOADING_OLDER = (s) => (s !== null && s !== undefined && s.loadingOlder === true);
+		const SEL_CURRENT_ID = (s) => (s !== null && s !== undefined && typeof s.current === "string" ? s.current : null);
+		/* store 迟到时的占位（只为把 hook 数量钉死，不会被真正渲染） */
+		const EMPTY_CHROME = { pinned: false, view: "panel" };
+		const EMPTY_STORE = {
+			subscribe: () => () => {},
+			getSnapshot: () => EMPTY_CHROME,
+			set: () => {},
+		};
+
+		/* 错误边界：面板子树异常时安静降级（不拖垮按钮、不弹红框），只留一行 console 线索 */
+		class PanelBoundary extends React.Component {
+			constructor(props) {
+				super(props);
+				this.state = { err: null };
+				this.retried = 0;
+			}
+			static getDerivedStateFromError(err) {
+				return { err };
+			}
+			componentDidCatch(err) {
+				try {
+					console.warn("[conversation] outline panel crashed; degraded to blank",
+						err && err.message ? err.message : err, "· stage:", window.__dshStage || "(未标记)");
+				} catch (e) {}
+				/* 面板常在"会话数据还没铺好"时就先渲染一次，此时抛错属可恢复：
+				   放一个小退避后清掉错误状态重试，最多 5 次，避免死循环。 */
+				if (this.retried < 5) {
+					this.retried += 1;
+					window.setTimeout(() => {
+						try { this.setState({ err: null }); } catch (e) {}
+					}, 250 * this.retried);
+				}
+			}
+			render() {
+				if (this.state.err) return null;
+				return this.props.children;
+			}
+		}
 
 		// 包自带样式：materialize 时注入一次，交给模块系统用 data-plugin 认领
 		// （随插件一起卸载）。全部走 dsw-alias-* / dsw-shadow-* 主题令牌。
@@ -998,6 +1066,7 @@ window.__ModuleLoader__.load({
 		function flattenVisible(nodes, opts) {
 			const out = [];
 			const walk = (list, forceChain) => {
+				if (!Array.isArray(list)) return;
 				for (const node of list) {
 					const passFilter =
 						(opts.searching !== true || node.isMatch === true || node.hasMatchedDescendant === true)
@@ -1876,6 +1945,8 @@ window.__ModuleLoader__.load({
 		};
 
 		function LevelSlider(props) {
+			stg("child:LevelSlider");
+			const counts = props.levelCounts === undefined || props.levelCounts === null ? {} : props.levelCounts;
 			const dots = [];
 			for (let level = 0; level <= 6; level++) {
 				let className = "dsh-conv-dot";
@@ -1887,7 +1958,7 @@ window.__ModuleLoader__.load({
 					className,
 					title: level === 0
 						? props.t("level.zero")
-						: props.t("level.tooltip", { level, count: props.levelCounts[level] === undefined ? 0 : props.levelCounts[level] }),
+						: props.t("level.tooltip", { level, count: counts[level] === undefined ? 0 : counts[level] }),
 					"aria-label": level === 0 ? props.t("level.zero") : "H" + level,
 					onClick: () => props.onChange(level),
 				}));
@@ -1902,7 +1973,9 @@ window.__ModuleLoader__.load({
 		}
 
 		function HighlightText(props) {
-			const { text, query } = props;
+			stg("child:HighlightText");
+			const { query } = props;
+			const text = typeof props.text === "string" ? props.text : String(props.text === undefined || props.text === null ? "" : props.text);
 			if (query === "" || props.isMatch !== true) return text;
 			const lower = text.toLowerCase();
 			const needle = query.toLowerCase();
@@ -1925,8 +1998,9 @@ window.__ModuleLoader__.load({
 		}
 
 		function OutlineRow(props) {
+			stg("child:OutlineRow");
 			const node = props.node;
-			const hasChildren = node.children.length > 0;
+			const hasChildren = Array.isArray(node.children) && node.children.length > 0;
 			let className = "dsh-conv-item";
 			if (props.active) className += " dsh-conv-item-active";
 			if (node.isUserQuery === true) className += " dsh-conv-item-user";
@@ -2065,21 +2139,40 @@ window.__ModuleLoader__.load({
 		function HistoryOutlinePanelInner(props) {
 			const safeProps = props === undefined || props === null ? {} : props;
 			const store = safeProps.store;
+			stg("panel:before-t");
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
+			stg("panel:after-t");
 
+			stg("panel:before-chrome");
 			const chrome = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			stg("panel:after-chrome");
 
-			// Session scope props: 优先 useChat (session-scoped slot), 退回到 useSessions (root-scoped slot)
-			const useSession = safeProps.useSession || safeProps.useSessions;
-			const useChat = safeProps.useChat;
-			const sessionId = safeProps.sessionId;
-			const currentId = (typeof sessionId === "string" && sessionId.length > 0)
-				? sessionId
-				: (typeof safeProps.useSessions === "function" ? safeProps.useSessions((s) => s?.current) : undefined)
-				?? "default-session";
+			/* ===== 钩子布局钉死 =====
+			   无论宿主这次下发了哪几个 hook 工厂，本组件都固定调用 4 次：
+			   3 次取会话状态 + 1 次取对话节点；缺哪一路就换成等价占位钩子。
+			   （改造前按 props 形态条件调用，sessionId 从空变成字符串时少调一次，
+			   hook 槽位整体错位 -> useMemo 抛 "Cannot read properties of undefined (reading 'length')"。） */
+			const sessionSource = typeof safeProps.useSession === "function" ? safeProps.useSession
+				: (typeof safeProps.useSessions === "function" ? safeProps.useSessions : useNoSession);
+			const nodesSource = typeof safeProps.useChat === "function" ? safeProps.useChat
+				: (sessionSource === useNoSession ? useNoNodes : sessionSource);
 
-			const hasMore = typeof useSession === "function" ? useSession((s) => s?.hasMore === true) : false;
-			const loadingOlder = typeof useSession === "function" ? useSession((s) => s?.loadingOlder === true) : false;
+			stg("panel:before-hasMore");
+			const hasMore = sessionSource(SEL_HAS_MORE) === true;
+			stg("panel:after-hasMore");
+			const loadingOlder = sessionSource(SEL_LOADING_OLDER) === true;
+			stg("panel:after-loadingOlder");
+			const boundSessionId = sessionSource(SEL_CURRENT_ID);
+			stg("panel:after-sessionsHook");
+			const hookNodes = nodesSource(conversationNodesOf) || EMPTY_NODES;
+			stg("panel:after-hookNodes");
+
+			// 会话 id：优先用槽位直接下发的 sessionId，其次用 hook 选出来的当前会话
+			const sessionId = (typeof safeProps.sessionId === "string" && safeProps.sessionId.length > 0)
+				? safeProps.sessionId : "";
+			const currentId = sessionId !== "" ? sessionId
+				: (typeof boundSessionId === "string" && boundSessionId.length > 0 ? boundSessionId : "default-session");
+
 			const [loadingAll, setLoadingAll] = useState(false);
 
 			const onLoadOlder = useCallback(() => {
@@ -2119,6 +2212,7 @@ window.__ModuleLoader__.load({
 			useEffect(() => () => window.clearTimeout(unlocatableTimer.current), []);
 
 			// 每个会话一个大纲管理器（收藏按会话持久化，层级偏好全局）。
+			stg("panel:before-manager");
 			const manager = useMemo(() => {
 				try {
 					return new OutlineManager({
@@ -2133,27 +2227,22 @@ window.__ModuleLoader__.load({
 				}
 			}, [currentId]);
 
-			// Session data: 优先使用 session scope 的 useChat 或 useSession selector
-			const nodesHook = useChat ?? useSession;
-			const hookNodes = nodesHook ? nodesHook(conversationNodesOf) : [];
-
-			// Fallback: 如果 slot 未直接收到 hook（如跨槽或独立渲染），从 useSessions 查找当前会话
+			stg("panel:after-manager");
+			// 兜底：槽位没给 hookNodes（或为空）时，按 boundSessionId 直接从 sessions face 取快照
 			const currentSessionNodes = useMemo(() => {
 				if (Array.isArray(hookNodes) && hookNodes.length > 0) return hookNodes;
-				const useSessions = safeProps.useSessions;
-				if (typeof useSessions !== "function") return [];
+				if (!boundSessionId) return EMPTY_NODES;
 				try {
-					const snap = useSessions((s) => {
-						if (!s || !s.current) return null;
-						const b = safeProps.sessions && typeof safeProps.sessions.binding === "function"
-							? safeProps.sessions.binding(s.current) : null;
-						return b && b.session ? b.session.getSnapshot() : null;
-					});
-					return conversationNodesOf(snap);
+					const b = safeProps.sessions && typeof safeProps.sessions.binding === "function"
+						? safeProps.sessions.binding(boundSessionId) : null;
+					if (!b || !b.session || typeof b.session.getSnapshot !== "function") return EMPTY_NODES;
+					const nodes = conversationNodesOf(b.session.getSnapshot());
+					return Array.isArray(nodes) && nodes.length > 0 ? nodes : EMPTY_NODES;
 				} catch (_) {
-					return [];
+					return EMPTY_NODES;
 				}
-			}, [hookNodes, safeProps.useSessions, safeProps.sessions]);
+			}, [hookNodes, boundSessionId, safeProps.sessions]);
+			stg("panel:after-sessionNodes");
 
 			const activeNodes = (Array.isArray(hookNodes) && hookNodes.length > 0)
 				? hookNodes
@@ -2168,6 +2257,7 @@ window.__ModuleLoader__.load({
 					return [];
 				}
 			}, [activeNodes]);
+			stg("panel:after-items");
 
 			if (items.length > 0 && manager.items.length === 0) {
 				manager.setItems(items);
@@ -2187,6 +2277,11 @@ window.__ModuleLoader__.load({
 			}, [manager]);
 
 			const state = manager === null ? undefined : manager.getState();
+			stg("panel:after-state");
+			/* getState() 的字段由包内 OutlineManager 提供；这里按数组兜底，
+			   避免某次返回不完整快照时整块面板被 "reading 'length'" 打崩。 */
+			const tree = state !== undefined && Array.isArray(state.tree) ? state.tree : EMPTY_NODES;
+			const visible = state !== undefined && Array.isArray(state.visible) ? state.visible : EMPTY_NODES;
 
 			// 阅读位置跟随（捕获阶段监听会话根 + rAF 节流）
 			const activeIdRef = useRef(null);
@@ -2203,7 +2298,7 @@ window.__ModuleLoader__.load({
 						collect(node.children);
 					}
 				};
-				collect(state.tree);
+				collect(tree);
 				const followActive = (id) => {
 					const list = listRef.current;
 					if (id === null || id === undefined || list === null) return;
@@ -2222,7 +2317,7 @@ window.__ModuleLoader__.load({
 						raf = 0;
 						let id = null;
 						try {
-							id = resolveVisibleActiveId(computeActiveItemId(root, flat), state.tree, state.visible);
+							id = resolveVisibleActiveId(computeActiveItemId(root, flat), tree, visible);
 						} catch (e) { /* 阅读位置跟随是 best-effort */ }
 						if (id !== activeIdRef.current) {
 							activeIdRef.current = id;
@@ -2347,7 +2442,7 @@ window.__ModuleLoader__.load({
 				                    (listRef.current && listRef.current.contains(document.activeElement));
 				if (e.altKey === true && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
 					if (state === undefined) return;
-					const flat = flattenTree(state.tree);
+					const flat = flattenTree(tree);
 					if (flat.length === 0) return;
 					e.preventDefault();
 					const current = activeIdRef.current;
@@ -2362,7 +2457,7 @@ window.__ModuleLoader__.load({
 					if (state === undefined) return;
 					const flat = [];
 					const collect = (nodes) => { for (const node of nodes) { flat.push(node); collect(node.children); } };
-					collect(state.visible);
+					collect(visible);
 					if (flat.length === 0) return;
 					e.preventDefault();
 					const current = activeIdRef.current;
@@ -2398,16 +2493,14 @@ window.__ModuleLoader__.load({
 			const queryCount = items.filter((item) => item.isUserQuery === true).length;
 
 			// 侧边刻度条数据：每轮提问一根 tick，fill 长度按该轮正文量归一化。
-			const ticks = state === undefined
-				? []
-				: state.tree.filter((node) => node.isUserQuery === true).map((node) => ({
-					id: node.id,
-					queryIndex: node.queryIndex,
-					text: node.text,
-					charCount: typeof node.charCount === "number" ? node.charCount : 0,
-				}));
+			const ticks = tree.filter((node) => node.isUserQuery === true).map((node) => ({
+				id: node.id,
+				queryIndex: node.queryIndex,
+				text: node.text,
+				charCount: typeof node.charCount === "number" ? node.charCount : 0,
+			}));
 			const maxChars = ticks.reduce((max, tick) => (tick.charCount > max ? tick.charCount : max), 0);
-			const activeTickId = state === undefined ? null : topLevelId(state.tree, activeIdRef.current);
+			const activeTickId = state === undefined ? null : topLevelId(tree, activeIdRef.current);
 
 			const size = VIEW_SIZES[chrome.view] === undefined ? VIEW_SIZES.panel : VIEW_SIZES[chrome.view];
 			const [dockSide, setDockSide] = useState(() => loadDockSide());
@@ -2435,8 +2528,9 @@ window.__ModuleLoader__.load({
 
 			// Preview state for hover tooltip.
 			const [previewNode, setPreviewNode] = useState(null);
+			stg("panel:before-tree");
 
-			const listChildren = state === undefined || state.visible.length === 0
+			const listChildren = state === undefined || visible.length === 0
 				? [h("div", { key: "empty", className: "dsh-conv-empty" },
 					h("span", { className: "dsh-conv-emptyglyph" }, h(OutlineGlyph)),
 					h("div", null, t("panel.empty")),
@@ -2445,7 +2539,7 @@ window.__ModuleLoader__.load({
 						className: "dsh-conv-empty-tip",
 						onClick: onLoadOlder,
 					}, "↳ " + t("history.loadOlder")) : null)]
-				: state.visible.map((node) => h(OutlineRow, {
+				: visible.map((node) => h(OutlineRow, {
 					key: node.id,
 					node,
 					active: node.id === activeIdRef.current,
@@ -2628,8 +2722,10 @@ window.__ModuleLoader__.load({
 			const store = safeProps.store;
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
 
-			const nodesHook = safeProps.useChat ?? safeProps.useSession;
-			const nodes = nodesHook ? nodesHook(conversationNodesOf) : [];
+			/* 同面板：hook 调用次数钉死，缺哪一路就用占位钩子，避免顺序漂移 */
+			const nodesSource = typeof safeProps.useChat === "function" ? safeProps.useChat
+				: (typeof safeProps.useSession === "function" ? safeProps.useSession : useNoNodes);
+			const nodes = nodesSource(conversationNodesOf) || EMPTY_NODES;
 
 			const items = useMemo(() => {
 				if (!nodes || nodes.length === 0) return [];
@@ -2668,13 +2764,25 @@ window.__ModuleLoader__.load({
 		 */
 		function HistoryOutlineSlot(props) {
 			const safeProps = props === undefined || props === null ? {} : props;
-			const store = safeProps.store;
-			if (!store || typeof store.subscribe !== "function" || typeof store.getSnapshot !== "function") {
-				return null;
-			}
+			const rawStore = safeProps.store;
+			const hasStore = rawStore !== undefined && rawStore !== null
+				&& typeof rawStore.subscribe === "function" && typeof rawStore.getSnapshot === "function";
+			/* hooks 必须在任何提前 return 之前跑完：这里给一个空 store 占位，
+			   保证 store 迟到（第一次渲染还没注入）时 hook 数量也不变。 */
+			const store = hasStore ? rawStore : EMPTY_STORE;
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
-			const chrome = useSyncExternalStore(store.subscribe, store.getSnapshot);
+			const chrome = useSyncExternalStoreSafe(store.subscribe, store.getSnapshot);
+			if (!hasStore) return null;
 			const pinned = chrome.pinned === true;
+
+			/* 宿主下发的 hook 工厂集合若发生变化，强制重挂载面板：
+			   否则面板内 hook 顺序会漂移，useMemo 读到上一轮的错位槽位。 */
+			const hookShape = [
+				typeof safeProps.useChat,
+				typeof safeProps.useSession,
+				typeof safeProps.useSessions,
+				typeof safeProps.sessionId,
+			].join("|");
 
 			return h(Fragment, null, [
 				h("button", {
@@ -2687,7 +2795,7 @@ window.__ModuleLoader__.load({
 					onClick: () => store.set({ pinned: !pinned }),
 				}, h(OutlineGlyph), h("span", { style: { marginLeft: 4 } }, t("panel.title"))),
 
-				pinned ? h(HistoryOutlinePanelInner, safeProps) : null,
+				pinned && !DIAG_NO_PANEL ? h(PanelBoundary, { key: hookShape }, h(HistoryOutlinePanelInner, safeProps)) : null,
 			]);
 		}
 
@@ -2706,12 +2814,41 @@ window.__ModuleLoader__.load({
 				}
 				const store = createChromeStore();
 
-				ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
-					name: "conversation.session.header.actions",
-					id: "dsh-conversation",
-					order: 100,
-					label: "大纲",
-				}, (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }))));
+				const SLOT = "conversation.session.header.actions";
+				const entryOpts = { name: SLOT, id: "dsh-conversation", order: 100, label: "大纲" };
+				const entryComp = (props) => h(HistoryOutlineSlot, Object.assign({}, props, { store }));
+
+				/* 槽位是延迟声明的：第一次 register 会报 "is not declared"，等父条目的
+				   children 表落地后再注册即可，所以这里做幂等重试。 */
+				let registered = false;
+				let regTries = 0;
+				let regTimer = null;
+				const tryRegister = () => {
+					if (registered) return;
+					regTries += 1;
+					try {
+						ctx.slots.register(entryOpts, entryComp);
+						registered = true;
+						if (regTimer) { clearTimeout(regTimer); regTimer = null; }
+					} catch (e0) {
+						const msg = e0 && e0.message ? e0.message : String(e0);
+						if (regTries >= 12) {
+							console.warn("[conversation] register failed after " + regTries + " tries: " + msg);
+						} else {
+							regTimer = setTimeout(tryRegister, 700);
+						}
+					}
+				};
+				tryRegister();
+
+				try {
+					ctx.slots.inject(SLOT, () => {
+						tryRegister();
+						return () => {};
+					});
+				} catch (e4) {
+					console.warn("[conversation] slot inject failed: " + (e4 && e4.message ? e4.message : e4));
+				}
 			} catch (err) {
 				console.warn("[conversation] init failed; panel disabled: " + (err && err.message ? err.message : err));
 			}

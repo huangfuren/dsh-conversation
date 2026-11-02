@@ -59,7 +59,19 @@ function loadClient() {
   const src = fs.readFileSync(CLIENT, 'utf8')
   const required = []
   const warns = []
+  // 宿主 React 提供 Component（错误边界必须是类组件），桩里也要有，否则加载即抛。
+  class Component {
+    constructor(props) {
+      this.props = props
+      this.state = {}
+    }
+
+    setState(patch) {
+      this.state = Object.assign({}, this.state, typeof patch === 'function' ? patch(this.state) : patch)
+    }
+  }
   const React = {
+    Component,
     createElement: () => null,
     Fragment: {},
     useState: () => [null, () => {}],
