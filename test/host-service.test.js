@@ -174,6 +174,16 @@ function collectText(node, out) {
   return out
 }
 
+
+/** 最小 chrome store（pinned/view/left/top），用于占位定位断言。 */
+function makeChromeStoreStub(snapshot) {
+  return {
+    subscribe: () => () => {},
+    getSnapshot: () => snapshot,
+    set: () => {},
+  }
+}
+
 const CHAT_ROWS = [
   { kind: 'user', key: 'u1', text: 'question from the service' },
   { kind: 'assistant', key: 'a1', text: '## heading from the service' },
@@ -414,6 +424,21 @@ test('slot props hooks still win when a host injects them', () => {
   const tree = component({ useChat: () => makeChatSnapshot(propRows) })
   const text = collectText(tree, []).join('\n')
   assert.ok(text.includes('question from props'), 'props-provided snapshots keep precedence')
+})
+
+test('placeholder uses the same persisted placement as the panel (drag position + view tier)', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  const Placeholder = api.internals.HistoryOutlinePlaceholder
+  assert.equal(typeof Placeholder, 'function', 'internals must export HistoryOutlinePlaceholder')
+  rec.resetRender()
+  const tree = Placeholder({ chrome: { pinned: true, view: 'full', left: 120, top: 40 }, side: 'right' })
+  const nodes = []
+  ;(function walk(n) { if (!n || typeof n !== 'object') return; nodes.push(n); const c = n.props && n.props.children; if (Array.isArray(c)) c.forEach(walk); else walk(c) })(tree)
+  const placeholder = nodes.find((n) => n.props && /dsh-conv-panel-pending/.test(String(n.props.className || '')))
+  assert.ok(placeholder, 'placeholder element must exist')
+  assert.equal(placeholder.props.style.left, 120, 'placeholder must honour the persisted left')
+  assert.equal(placeholder.props.style.top, 40, 'placeholder must honour the persisted top')
 })
 
 test('panelMountStateOf only defers mounting while the host service is waiting', () => {

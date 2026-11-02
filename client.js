@@ -867,6 +867,20 @@ window.__ModuleLoader__.load({
 			wide: { width: 480, height: "min(82vh, calc(100vh - 90px))" },
 			full: { width: 720, height: "calc(100vh - 56px)" },
 		};
+
+		/** 面板与首屏占位共用的定位计算：拖拽位置优先，其次按停靠边与视图档位。
+		 *  刷新时占位与真正面板落在同一位置，不会先跳回默认位置 2 秒（PR review suggestion 2）。 */
+		function outlinePanelPlacement(chrome, dockSide) {
+			const snapshot = chrome !== null && typeof chrome === "object" ? chrome : EMPTY_CHROME;
+			const size = VIEW_SIZES[snapshot.view] === undefined ? VIEW_SIZES.panel : VIEW_SIZES[snapshot.view];
+			if (typeof snapshot.left === "number" && typeof snapshot.top === "number") {
+				return { width: size.width, height: size.height, left: snapshot.left, top: snapshot.top };
+			}
+			const top = snapshot.view === "full" ? 28 : 72;
+			return dockSide === "left"
+				? { width: size.width, height: size.height, left: 16, top }
+				: { width: size.width, height: size.height, right: 16, top };
+		}
 		const VIEW_ORDER = ["panel", "wide", "full"];
 		const REPO_URL = "https://github.com/huangfuren/dsh-conversation";
 		const MAX_USER_TEXT = 80;
@@ -2588,11 +2602,30 @@ window.__ModuleLoader__.load({
 		 * uiSession 缺席时退回 `sessions.list` + `sessions.binding(id).session`；这条退路没有
 		 * chat 源，因此只保证「不崩、不闪」，数据为空态而不是伪造。
 		 */
+		/** 稳定快照源：同一宿主 store（且 getSnapshot 身份不变）跨渲染返回同一个 {subscribe,getSnapshot}，
+		 *  避免 useSyncExternalStore 因 source 身份每轮变化而反复 resubscribe（PR review suggestion 3）。
+		 *  只缓存源对象、不改宿主 store；store 换了立即重建。 */
+		function useStableSnapshotSource(store) {
+			const sourceRef = useRef(null);
+			const storeRef = useRef(null);
+			const getRef = useRef(null);
+			const get = store !== null && store !== undefined && typeof store.getSnapshot === "function"
+				? store.getSnapshot : null;
+			if (sourceRef.current === null || storeRef.current !== store || getRef.current !== get) {
+				const source = snapshotSourceOf(store);
+				if (source !== null) { source.__get = get; sourceRef.current = source; }
+				else { sourceRef.current = null; }
+				storeRef.current = store;
+				getRef.current = get;
+			}
+			return sourceRef.current;
+		}
+
 		function useHostSession(host) {
 			const uiSession = hostServiceOf(host, "uiSession");
 			const sessionsService = hostServiceOf(host, "sessions");
 
-			const currentSource = useMemo(() => snapshotSourceOf(uiSession && uiSession.current), [uiSession]);
+			const currentSource = useStableSnapshotSource(uiSession && uiSession.current);
 			const binding = useSyncExternalStore(
 				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
 				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
@@ -2600,7 +2633,7 @@ window.__ModuleLoader__.load({
 			const bindingKey = binding !== null && typeof binding === "object"
 				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
 
-			const listSource = useMemo(() => snapshotSourceOf(sessionsService && sessionsService.list), [sessionsService]);
+			const listSource = useStableSnapshotSource(sessionsService && sessionsService.list);
 			const listSnapshot = useSyncExternalStore(
 				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
 				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
@@ -2608,10 +2641,8 @@ window.__ModuleLoader__.load({
 			const listedSessionId = useMemo(() => mainSessionIdOf(sessionsService, listSnapshot), [sessionsService, listSnapshot]);
 			const sessionId = bindingKey === undefined ? listedSessionId : bindingKey;
 
-			const chatSource = useMemo(() => {
-				const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
-				return snapshotSourceOf(hooks && hooks.chat);
-			}, [binding]);
+			const bindingHooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
+			const chatSource = useStableSnapshotSource(bindingHooks && bindingHooks.chat);
 			const chatSnapshot = useSyncExternalStore(
 				chatSource === null ? NOOP_SUBSCRIBE : chatSource.subscribe,
 				chatSource === null ? EMPTY_HOST_SNAPSHOT_GET : chatSource.getSnapshot,
@@ -2637,7 +2668,7 @@ window.__ModuleLoader__.load({
 				}
 			}, [binding, sessionId, sessionsService]);
 
-			const sessionSource = useMemo(() => snapshotSourceOf(session), [session]);
+			const sessionSource = useStableSnapshotSource(session);
 			const sessionSnapshot = useSyncExternalStore(
 				sessionSource === null ? NOOP_SUBSCRIBE : sessionSource.subscribe,
 				sessionSource === null ? EMPTY_HOST_SNAPSHOT_GET : sessionSource.getSnapshot,
@@ -2673,6 +2704,35 @@ window.__ModuleLoader__.load({
 			if (hostSession === null || hostSession === undefined || hostSession.available !== true) return "mount";
 			if (hostSession.ready === true) return "mount";
 			return timedOut === true ? "mount" : "pending";
+		}
+
+		/** 只读「宿主是否就绪」的轻量 hook：只订阅 uiSession.current 与 sessions.list，
+		 *  不订阅 chat 快照 ⇒ 流式 token 更新不会带着标题栏按钮一起重渲染（PR review suggestion 1）。 */
+		function useHostReadiness(host) {
+			const uiSession = hostServiceOf(host, "uiSession");
+			const sessionsService = hostServiceOf(host, "sessions");
+			const currentSource = useStableSnapshotSource(uiSession && uiSession.current);
+			const binding = useSyncExternalStore(
+				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
+				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
+			);
+			const bindingKey = binding !== null && typeof binding === "object"
+				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
+			const listSource = useStableSnapshotSource(sessionsService && sessionsService.list);
+			const listSnapshot = useSyncExternalStore(
+				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
+				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
+			);
+			const listedSessionId = useMemo(() => mainSessionIdOf(sessionsService, listSnapshot), [sessionsService, listSnapshot]);
+			const sessionId = bindingKey === undefined ? listedSessionId : bindingKey;
+			return {
+				available: currentSource !== null || listSource !== null
+					|| (sessionsService !== null && sessionsService !== undefined
+						&& typeof sessionsService.binding === "function"),
+				ready: sessionId !== undefined,
+				sessionId,
+				sessions: sessionsService,
+			};
 		}
 
 		/**
@@ -3111,7 +3171,6 @@ window.__ModuleLoader__.load({
 			const maxChars = ticks.reduce((max, tick) => (tick.charCount > max ? tick.charCount : max), 0);
 			const activeTickId = state === undefined ? null : topLevelId(tree, activeIdRef.current);
 
-			const size = VIEW_SIZES[chrome.view] === undefined ? VIEW_SIZES.panel : VIEW_SIZES[chrome.view];
 			const [dockSide, setDockSide] = useState(() => loadDockSide());
 			const onToggleDockSide = useCallback(() => {
 				const next = dockSide === "left" ? "right" : "left";
@@ -3123,11 +3182,7 @@ window.__ModuleLoader__.load({
 			const panelOpacity = normalizeOpacity(chrome.opacity);
 			/* 同一帧只探测一次能力：既决定要不要渲染滑杆，也决定要不要写这两个变量。 */
 			const alphaSupported = supportsBackgroundAlpha();
-			const panelPlacement = typeof chrome.left === "number" && typeof chrome.top === "number"
-				? { width: size.width, height: size.height, left: chrome.left, top: chrome.top }
-				: (dockSide === "left"
-					? { width: size.width, height: size.height, left: 16, top: chrome.view === "full" ? 28 : 72 }
-					: { width: size.width, height: size.height, right: 16, top: chrome.view === "full" ? 28 : 72 });
+			const panelPlacement = outlinePanelPlacement(chrome, dockSide);
 			/* 透明度只作用于背景色：面板底色用 color-mix 掺透明，文字保持不透明，
 			   否则整块降 opacity 会连正文一起淡掉，反而更看不清。 */
 			const panelStyle = alphaSupported
@@ -3391,9 +3446,8 @@ window.__ModuleLoader__.load({
 			const safeProps = props === undefined || props === null ? {} : props;
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
 			const side = safeProps.side === "left" ? "left" : "right";
-			const style = side === "left"
-				? { width: VIEW_SIZES.panel.width, left: 16, top: 72, right: "auto" }
-				: { width: VIEW_SIZES.panel.width, right: 16, top: 72, left: "auto" };
+			// 与真正面板共用同一套定位：拖拽位置 / 视图档位都会被尊重（review suggestion 2）。
+			const style = outlinePanelPlacement(safeProps.chrome, side);
 			return h("div", {
 				className: "dsh-conv-panel dsh-conv-panel-pending",
 				style,
@@ -3440,7 +3494,7 @@ window.__ModuleLoader__.load({
 			].join("|");
 
 			// 首屏闸门用到的 hook 全部无条件调用（与宿主服务是否就绪无关）。
-			const hostSession = useHostSession(safeProps.host);
+			const hostSession = useHostReadiness(safeProps.host);
 			const [timedOut, setTimedOut] = useState(false);
 			useEffect(() => {
 				if (hostSession.available !== true || hostSession.ready === true || timedOut === true) return undefined;
@@ -3448,7 +3502,7 @@ window.__ModuleLoader__.load({
 				return () => window.clearTimeout(timer);
 			}, [hostSession.available, hostSession.ready, timedOut]);
 			const mountPanel = panelMountStateOf(hostSession, timedOut) === "mount";
-			const dockSide = loadDockSide();
+			const dockSide = useMemo(() => loadDockSide(), []);
 
 			return h(Fragment, null, [
 				h("button", {
@@ -3465,7 +3519,7 @@ window.__ModuleLoader__.load({
 					? (mountPanel
 						? h(PanelBoundary, { key: hookShape },
 							h(HistoryOutlinePanelInner, Object.assign({}, safeProps, { key: "conv-panel" })))
-						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide }))
+						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide, chrome }))
 					: null,
 			]);
 		}
