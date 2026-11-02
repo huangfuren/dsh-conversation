@@ -119,7 +119,10 @@ function loadClient(React) {
 }
 
 const api = loadClient(reactTree)
-const src0 = fs.readFileSync(CLIENT, 'utf8')
+// Windows + core.autocrlf=true 检出时 client.js 是 CRLF；R1/变异锚点都按 LF 的 `\n+tab`
+  // 写死，不归一会 indexOf 恒为 -1（maintainer review：Windows 上 45/46）。读取处统一归一，
+  // 一处改动同时覆盖 R1 与 M1/M2 变异锚点（不引入 .gitattributes，避免改变整仓检出行为）。
+  const src0 = fs.readFileSync(CLIENT, 'utf8').replace(/\r\n/g, '\n')
 
 const zhTitle = '历史提问 · 大纲'
 const zhCollapse = '收起面板'
