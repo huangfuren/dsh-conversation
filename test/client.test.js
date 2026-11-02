@@ -112,7 +112,7 @@ test('loader contract: id, exports and declared services', () => {
   assert.deepEqual(required, ['react'], 'client may only require the host-provided react')
 })
 
-test('internals expose exactly the pure helpers', () => {
+test('internals export list covers helpers, components and test seams', () => {
   assert.deepEqual(Object.keys(api.internals).sort(), [
       'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'buildOutlineItems',
       'conversationNodesOf', 'createHostBridge', 'mainSessionIdOf', 'makeSessionBindingSelector',

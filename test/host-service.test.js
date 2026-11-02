@@ -216,9 +216,9 @@ function makeHost(overrides = {}) {
   }
   const services = {
     uiSession: {
-      current: {
-        getSnapshot: () => binding,
-        subscribe: () => () => {},
+      get current() {
+        if (overrides.hostileCurrent === true) throw new Error('hostile current getter')
+        return { getSnapshot: () => binding, subscribe: () => () => {} }
       },
     },
     sessions: {
@@ -314,7 +314,7 @@ test('mainSessionIdOf follows the host main-view retention and degrades safely',
   assert.equal(mainSessionIdOf(sessions, {
     ids: ['a', 'b'],
     byId: { a: { retainedBy: { mainView: 1 } }, b: { retainedBy: { mainView: 2 } } },
-  }), 'b', 'the session retained by the main view wins')
+  }), 'a', 'host publishMain takes the first byId candidate (not the max retention)')
   assert.equal(mainSessionIdOf(sessions, {
     ids: ['a'], byId: { a: { retainedBy: { mainView: 1 } } },
   }), 'a')
@@ -503,4 +503,57 @@ test('the rendered panel logs the raw snapshot contract and probes the DOM contr
   assert.equal(logs.filter((line) => line.includes('session snapshot shape:')).length, 1, 'shape log is one-shot')
   assert.equal(logs.filter((line) => line.includes('DOM contract')).length, 1, 'DOM log is one-shot')
   rec.flushCleanups()
+})
+
+test('mainSessionIdOf matches host publishMain order and survives hostile getters', () => {
+  const { mainSessionIdOf } = loadClient(makeRecordingReact().React).internals
+  const sessions = { list: { getSnapshot: () => ({ ids: [], byId: {} }) } }
+  assert.equal(mainSessionIdOf(sessions, {
+    current: 'b',
+    ids: ['a', 'b'],
+    byId: { a: { retainedBy: { mainView: 1 } }, b: { retainedBy: { mainView: 1 } } },
+  }), 'b', 'a retained current binding wins')
+  assert.equal(mainSessionIdOf(sessions, {
+    current: 'c',
+    ids: ['a'],
+    byId: { a: { retainedBy: { mainView: 1 } } },
+  }), 'a', 'an unretained current falls back to the first retained candidate')
+  assert.equal(mainSessionIdOf({ get list() { throw new Error('boom-list') } }, undefined), undefined)
+  assert.equal(mainSessionIdOf({ list: { getSnapshot() { throw new Error('boom-snap') } } }, undefined), undefined)
+  assert.equal(mainSessionIdOf(sessions, {
+    byId: {
+      a: { get retainedBy() { throw new Error('boom-row') } },
+      b: { retainedBy: { mainView: 1 } },
+    },
+  }), 'b', 'a throwing row is skipped, not fatal')
+})
+
+test('hostile uiSession.current getter cannot take down the slot entry', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  const component = mountViaApply(api, makeHost({ hostileCurrent: true }))
+  let tree
+  assert.doesNotThrow(() => { tree = component({}) }, 'hostile service getter must degrade, not throw')
+  let hasHeaderBtn = false
+  ;(function walk(node) {
+    if (node === null || node === undefined || typeof node !== 'object') return
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (node.props && /dsh-conv-header-btn/.test(String(node.props.className || ''))) hasHeaderBtn = true
+    walk(node.children ?? (node.props && node.props.children))
+  })(tree)
+  assert.ok(hasHeaderBtn, 'header button must still render')
+})
+
+test('slot keeps the same hook count across store-absent -> store-present renders', () => {
+  const rec = makeRecordingReact()
+  const api = loadClient(rec.React)
+  const Slot = api.internals.HistoryOutlineSlot
+  const ownHooks = () => rec.marks.filter((m) => m.endsWith('#0') && !/^enter:|^leave:/.test(m)).length
+  rec.resetRender()
+  assert.doesNotThrow(() => Slot({}))
+  const first = ownHooks()
+  rec.resetRender()
+  assert.doesNotThrow(() => Slot({ store: makeChromeStoreStub({ pinned: false }) }))
+  const second = ownHooks()
+  assert.equal(first, second, 'store arriving later must not change the hook count (Rules of Hooks)')
 })

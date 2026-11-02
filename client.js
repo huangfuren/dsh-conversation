@@ -54,6 +54,8 @@ window.__ModuleLoader__.load({
 		   若直接条件调用会导致 hook 顺序漂移（表现为 useMemo 读取上一轮槽位拿到
 		   非数组，抛 "reading 'length'"）。这里用等价的占位钩子把数量钉死。 */
 		const EMPTY_NODES = [];
+		/* 稳定 identity selector：传进宿主 hook 的选择器身份必须跨渲染不变（否则 selector 本身也会触发重算）。 */
+		const IDENTITY_SNAPSHOT = (snapshot) => snapshot;
 		function useNoSession(selector) { return useState(undefined)[0]; }
 		function useNoNodes(selector) { useState(0); return EMPTY_NODES; }
 		/* selector 必须是模块级稳定引用：每轮 new 一个会让 useSyncExternalStore 反复比对 */
@@ -2506,26 +2508,32 @@ window.__ModuleLoader__.load({
 		/** 把一个 { getSnapshot, subscribe } 的宿主 store 包成 uSES 可直接使用的稳定 source。
 		 *  订阅/读取都吞掉异常：宿主 store 抛错时返回空快照，面板降级为空态而不是崩槽位。 */
 		function snapshotSourceOf(store) {
-			if (store === null || store === undefined || typeof store !== "object") return null;
-			if (typeof store.getSnapshot !== "function" || typeof store.subscribe !== "function") return null;
-			return {
-				subscribe: (listener) => {
-					try {
-						const off = store.subscribe(listener);
-						return typeof off === "function" ? off : NOOP_SUBSCRIBE();
-					} catch (_) {
-						return NOOP_SUBSCRIBE();
-					}
-				},
-				getSnapshot: () => {
-					try {
-						const value = store.getSnapshot();
-						return value === undefined ? EMPTY_HOST_SNAPSHOT : value;
-					} catch (_) {
-						return EMPTY_HOST_SNAPSHOT;
-					}
-				},
-			};
+			/* 宿主 store 的 getSnapshot/subscribe 可能是 getter（0.2.x 的 store 是类实例）：
+			   读取属性本身就会抛错，因此整段探测都放进 try/catch，坏 store 只降级为 null。 */
+			try {
+				if (store === null || store === undefined || typeof store !== "object") return null;
+				if (typeof store.getSnapshot !== "function" || typeof store.subscribe !== "function") return null;
+				return {
+					subscribe: (listener) => {
+						try {
+							const off = store.subscribe(listener);
+							return typeof off === "function" ? off : NOOP_SUBSCRIBE();
+						} catch (_) {
+							return NOOP_SUBSCRIBE();
+						}
+					},
+					getSnapshot: () => {
+						try {
+							const value = store.getSnapshot();
+							return value === undefined ? EMPTY_HOST_SNAPSHOT : value;
+						} catch (_) {
+							return EMPTY_HOST_SNAPSHOT;
+						}
+					},
+				};
+			} catch (_) {
+				return null;
+			}
 		}
 
 		/** 从宿主桥读服务；bridge 自己抛错时按缺失处理（不向上冒泡）。 */
@@ -2540,35 +2548,44 @@ window.__ModuleLoader__.load({
 
 		/** 会话列表里「主视图正在使用」的会话（与宿主 ui-session 的 publishMain 同款判定）。 */
 		function mainSessionIdOf(sessionsService, listSnapshot) {
-			if (sessionsService === null || sessionsService === undefined) return undefined;
-			let list = listSnapshot;
-			if (list === null || list === undefined || typeof list !== "object") {
-				try {
-					const store = sessionsService.list;
-					list = store !== null && store !== undefined && typeof store.getSnapshot === "function"
-						? store.getSnapshot() : undefined;
-				} catch (_) {
-					list = undefined;
+			/* 与宿主 dsh-client-ui-session `publishMain()` 同序：
+			   current 且 retainedBy.mainView>0 优先，否则 byId 的插入顺序里第一个 retained>0 的会话。
+			   整个探测过程吞异常：服务/快照是宿主对象，getter 可能抛错（不能让槽位渲染挂掉）。 */
+			try {
+				if (sessionsService === null || sessionsService === undefined) return undefined;
+				let list = listSnapshot;
+				if (list === null || list === undefined || typeof list !== "object") {
+					try {
+						const store = safeRead(sessionsService, "list");
+						list = store !== null && store !== undefined && typeof store.getSnapshot === "function"
+							? store.getSnapshot() : undefined;
+					} catch (_) {
+						list = undefined;
+					}
 				}
-			}
-			if (list === null || list === undefined || typeof list !== "object") return undefined;
-			const byId = list.byId !== null && typeof list.byId === "object" ? list.byId : {};
-			let best;
-			let bestRetained = 0;
-			for (const id of Object.keys(byId)) {
-				const row = byId[id];
-				const retained = row !== null && typeof row === "object"
-					&& row.retainedBy !== null && typeof row.retainedBy === "object"
-					? Number(row.retainedBy.mainView) || 0 : 0;
-				if (retained > bestRetained) {
-					best = id;
-					bestRetained = retained;
+				if (list === null || list === undefined || typeof list !== "object") return undefined;
+				const byId = safeRead(list, "byId");
+				const retainedOf = (row) => {
+					const retainedBy = safeRead(row, "retainedBy");
+					return Number(safeRead(retainedBy, "mainView")) || 0;
+				};
+				const currentId = safeRead(list, "current");
+				if (typeof currentId === "string" && currentId.length > 0
+					&& byId !== null && typeof byId === "object") {
+					const currentRow = safeRead(byId, currentId);
+					if (currentRow !== undefined && retainedOf(currentRow) > 0) return currentId;
 				}
+				if (byId !== null && typeof byId === "object") {
+					for (const id of Object.keys(byId)) {
+						if (retainedOf(safeRead(byId, id)) > 0) return id;
+					}
+				}
+				if (typeof currentId === "string" && currentId.length > 0) return currentId;
+				const ids = safeRead(list, "ids");
+				return Array.isArray(ids) && ids.length === 1 && typeof ids[0] === "string" ? ids[0] : undefined;
+			} catch (_) {
+				return undefined;
 			}
-			if (best !== undefined) return best;
-			if (typeof list.current === "string" && list.current.length > 0) return list.current;
-			const ids = Array.isArray(list.ids) ? list.ids : [];
-			return ids.length === 1 && typeof ids[0] === "string" ? ids[0] : undefined;
 		}
 
 		/**
@@ -2605,12 +2622,24 @@ window.__ModuleLoader__.load({
 		/** 稳定快照源：同一宿主 store（且 getSnapshot 身份不变）跨渲染返回同一个 {subscribe,getSnapshot}，
 		 *  避免 useSyncExternalStore 因 source 身份每轮变化而反复 resubscribe（PR review suggestion 3）。
 		 *  只缓存源对象、不改宿主 store；store 换了立即重建。 */
+		/** 只读属性访问：宿主对象上的 getter 可能抛错，槽位渲染期间任何服务属性读取都必须走这里。 */
+		function safeRead(object, key) {
+			try {
+				return object === null || object === undefined ? undefined : object[key];
+			} catch (_) {
+				return undefined;
+			}
+		}
+
 		function useStableSnapshotSource(store) {
 			const sourceRef = useRef(null);
 			const storeRef = useRef(null);
 			const getRef = useRef(null);
-			const get = store !== null && store !== undefined && typeof store.getSnapshot === "function"
-				? store.getSnapshot : null;
+			let get = null;
+			try {
+				get = store !== null && store !== undefined && typeof store.getSnapshot === "function"
+					? store.getSnapshot : null;
+			} catch (_) { get = null; }
 			if (sourceRef.current === null || storeRef.current !== store || getRef.current !== get) {
 				const source = snapshotSourceOf(store);
 				if (source !== null) { source.__get = get; sourceRef.current = source; }
@@ -2625,15 +2654,17 @@ window.__ModuleLoader__.load({
 			const uiSession = hostServiceOf(host, "uiSession");
 			const sessionsService = hostServiceOf(host, "sessions");
 
-			const currentSource = useStableSnapshotSource(uiSession && uiSession.current);
+			const currentSource = useStableSnapshotSource(safeRead(uiSession, "current"));
 			const binding = useSyncExternalStore(
 				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
 				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
 			);
-			const bindingKey = binding !== null && typeof binding === "object"
-				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
+			const bindingKey = (() => {
+				const key = safeRead(binding, "key");
+				return typeof key === "string" && key.length > 0 ? key : undefined;
+			})();
 
-			const listSource = useStableSnapshotSource(sessionsService && sessionsService.list);
+			const listSource = useStableSnapshotSource(safeRead(sessionsService, "list"));
 			const listSnapshot = useSyncExternalStore(
 				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
 				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
@@ -2641,8 +2672,8 @@ window.__ModuleLoader__.load({
 			const listedSessionId = useMemo(() => mainSessionIdOf(sessionsService, listSnapshot), [sessionsService, listSnapshot]);
 			const sessionId = bindingKey === undefined ? listedSessionId : bindingKey;
 
-			const bindingHooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
-			const chatSource = useStableSnapshotSource(bindingHooks && bindingHooks.chat);
+			const bindingHooks = safeRead(binding, "hooks");
+			const chatSource = useStableSnapshotSource(safeRead(bindingHooks, "chat"));
 			const chatSnapshot = useSyncExternalStore(
 				chatSource === null ? NOOP_SUBSCRIBE : chatSource.subscribe,
 				chatSource === null ? EMPTY_HOST_SNAPSHOT_GET : chatSource.getSnapshot,
@@ -2650,8 +2681,8 @@ window.__ModuleLoader__.load({
 
 			const session = useMemo(() => {
 				try {
-					const hooks = binding !== null && typeof binding === "object" ? binding.hooks : undefined;
-					const direct = hooks && hooks.session;
+					const hooks = safeRead(binding, "hooks");
+					const direct = safeRead(hooks, "session");
 					if (direct !== null && direct !== undefined && typeof direct.getSnapshot === "function"
 						&& typeof direct.subscribe === "function") {
 						return direct;
@@ -2659,7 +2690,7 @@ window.__ModuleLoader__.load({
 					if (sessionId === undefined || sessionsService === null || sessionsService === undefined
 						|| typeof sessionsService.binding !== "function") return null;
 					const found = sessionsService.binding(sessionId);
-					const fallback = found && found.session;
+					const fallback = safeRead(found, "session");
 					return fallback !== null && fallback !== undefined
 						&& typeof fallback.getSnapshot === "function" && typeof fallback.subscribe === "function"
 						? fallback : null;
@@ -2711,14 +2742,16 @@ window.__ModuleLoader__.load({
 		function useHostReadiness(host) {
 			const uiSession = hostServiceOf(host, "uiSession");
 			const sessionsService = hostServiceOf(host, "sessions");
-			const currentSource = useStableSnapshotSource(uiSession && uiSession.current);
+			const currentSource = useStableSnapshotSource(safeRead(uiSession, "current"));
 			const binding = useSyncExternalStore(
 				currentSource === null ? NOOP_SUBSCRIBE : currentSource.subscribe,
 				currentSource === null ? EMPTY_HOST_SNAPSHOT_GET : currentSource.getSnapshot,
 			);
-			const bindingKey = binding !== null && typeof binding === "object"
-				&& typeof binding.key === "string" && binding.key.length > 0 ? binding.key : undefined;
-			const listSource = useStableSnapshotSource(sessionsService && sessionsService.list);
+			const bindingKey = (() => {
+				const key = safeRead(binding, "key");
+				return typeof key === "string" && key.length > 0 ? key : undefined;
+			})();
+			const listSource = useStableSnapshotSource(safeRead(sessionsService, "list"));
 			const listSnapshot = useSyncExternalStore(
 				listSource === null ? NOOP_SUBSCRIBE : listSource.subscribe,
 				listSource === null ? EMPTY_HOST_SNAPSHOT_GET : listSource.getSnapshot,
@@ -2776,8 +2809,12 @@ window.__ModuleLoader__.load({
 			stg("panel:after-loadingOlder");
 			const boundSessionId = sessionSource(SEL_CURRENT_ID);
 			stg("panel:after-sessionsHook");
-			const rawNodesSnapshot = nodesSource((snapshot) => snapshot);
-			const hookNodes = safeNodesOf(rawNodesSnapshot) || EMPTY_NODES;
+			const rawNodesSnapshot = nodesSource(IDENTITY_SNAPSHOT);
+			/* 关键：safeNodesOf 对 chat.{order,nodes(Map)} 这类旧契约会分配新数组；若在 hook 外
+			   直接算，每轮渲染 hookNodes 身份都变 ⇒ activeNodes/items 变化 ⇒ 下方 bump() effect
+			   无限重渲染（真实 React：Maximum update depth exceeded）。用 useMemo 按原始快照身份
+			   缓存归一结果；EMPTY_NODES 只是 safeNodesOf 返回空数组时的稳定占位。 */
+			const hookNodes = useMemo(() => safeNodesOf(rawNodesSnapshot) || EMPTY_NODES, [rawNodesSnapshot]);
 			stg("panel:after-hookNodes");
 
 			/* 服务路径（PR#2 f228ac4，叠加在钉死布局之上）：
@@ -2804,7 +2841,8 @@ window.__ModuleLoader__.load({
 					: (typeof hostSession.sessionId === "string" && hostSession.sessionId.length > 0
 						? hostSession.sessionId : "default-session"));
 
-			// 诊断用原始快照：与实际驱动大纲的那一份保持一致（props 优先，其次服务，最后旧回退）。
+			// 诊断用快照：props/宿主 hook 路径的原始快照；该路径无数据时用服务路径的 chat 快照。
+			// （currentSessionNodes 是旧 sessions fallback 的归一结果，不在这里重复诊断。）
 			const observedSnapshot = (Array.isArray(propNodes) && propNodes.length > 0)
 				? propSnapshot
 				: (hostSession.snapshot !== null ? hostSession.snapshot : propFallbackSnapshot);
@@ -3481,7 +3519,6 @@ window.__ModuleLoader__.load({
 			const store = hasStore ? rawStore : EMPTY_STORE;
 			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
 			const chrome = useSyncExternalStoreSafe(store.subscribe, store.getSnapshot);
-			if (!hasStore) return null;
 			const pinned = chrome.pinned === true;
 
 			/* 宿主下发的 hook 工厂集合若发生变化，强制重挂载面板：
@@ -3503,6 +3540,9 @@ window.__ModuleLoader__.load({
 			}, [hostSession.available, hostSession.ready, timedOut]);
 			const mountPanel = panelMountStateOf(hostSession, timedOut) === "mount";
 			const dockSide = useMemo(() => loadDockSide(), []);
+			/* 所有 hook 都必须在任何提前 return 之前执行：store 缺席→注入若发生在两次渲染之间，
+			   提前 return 会让 hook 数量变化（Rules of Hooks 崩溃）。 */
+			if (!hasStore) return null;
 
 			return h(Fragment, null, [
 				h("button", {
