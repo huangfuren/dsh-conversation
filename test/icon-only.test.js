@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CLIENT = path.join(ROOT, 'client.js')
 
-/** 宿主原生事实（取证记录；改动请同步 docs/reports）：
+/** 宿主原生事实（取证记录；改动请同步本文件里的阈值断言与 PR 描述）：
  *  - 容器：`.wSkVaW_titleRow{...container-type:inline-size}`（dsh-client-ui-conversation）；
  *  - 原生 label 收起条件（dsh-client-ui-agent-preset）：
  *    `@container (width<=540px){.SVAs4q_label{display:none}}`。 */
@@ -202,15 +202,24 @@ function failingTestsIn(dir) {
     // "子报告"模式，stdout 为空）；CONV_ICON_MUTATIONS=0 禁用副本内的变异循环（防指数递归）。
     const env = { ...process.env, CONV_ICON_MUTATIONS: '0' }
     delete env.NODE_TEST_CONTEXT
-    out = execFileSync(process.execPath, ['--test', 'test/icon-only.test.js'], { cwd: dir, encoding: 'utf8', timeout: 120000, env })
+    // 显式钉 TAP reporter：execFileSync 子进程没有 TTY，Node 22/Windows 下失败行是
+    // `not ok N - name`（spec reporter 才是 `✖ name`）。两种都解析，且 reporter 固定，
+    // 不再依赖 TTY 状态（maintainer review [blocking] 1）。
+    out = execFileSync(process.execPath, ['--test', '--test-reporter=tap', 'test/icon-only.test.js'], { cwd: dir, encoding: 'utf8', timeout: 120000, env })
   } catch (e) {
     out = String((e && e.stdout) || '') + String((e && e.stderr) || '')
   }
-  const names = []
-  for (const m of out.matchAll(/^✖ ([^\n]+?)(?: \([\d.]+ms\))?$/gm)) {
-    if (m[1] !== 'failing tests:') names.push(m[1])
+  const names = new Set()
+  // TAP：not ok 3 - test name（去掉可能的 ` # comment` 尾巴）
+  for (const m of out.matchAll(/^not ok \d+ - (.+)$/gm)) {
+    const name = m[1].replace(/\s+#.*$/, '').trim()
+    if (name) names.add(name)
   }
-  return [...new Set(names)].sort()
+  // spec reporter：✖ test name (12.3ms)
+  for (const m of out.matchAll(/^✖ (.+?)(?: \([\d.]+ms\))?$/gm)) {
+    if (m[1] !== 'failing tests:') names.add(m[1])
+  }
+  return [...names].sort()
 }
 
 function withMutant(id, what, pairs, expectRed) {
