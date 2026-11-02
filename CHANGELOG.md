@@ -6,34 +6,6 @@
 
 ## [Unreleased]
 
-<<<<<<< HEAD
-## [1.4.0] - 2026-11-02
-
-### Added
-
-- **面板背景透明度可调。** 之前面板底色恒为主题令牌的纯色，挡住正文时只能靠拖走或收起面板绕开；
-  现在面板底部多一条滑杆，可把背景不透明度调到 40%~100%（默认 100%，观感与之前完全一致）。
-  只降低底色、不降低文字，避免半透明后正文反而看不清；调暗时自动按比例加背景模糊。
-  点右侧百分比或双击滑杆恢复完全不透明。该值与 `pinned` / 位置一起写进 `dsh-conversation:panel`，
-  重载后保持；老用户的快照里没有这个字段，升级后仍是完全不透明。
-- **旧宿主上不显示透明度滑杆。** `color-mix` 需要 Chromium 111+，更老的宿主会整行丢弃该声明、
-  底色恒为纯色。之前那种情况下滑杆会「拖了没反应」；现在改为先探测能力，不支持就整行不渲染，
-  面板维持完全不透明，不留下无效控件。
-
-### Changed
-
-- **槽位注册改为三通道兜底。** 之前把 `ctx.slots.inject` 当成硬依赖：宿主一旦移除或改名该 API，
-  面板整块消失，只留一条 `console.warn`。现在按宿主实际能力选通道——有 `inject` 走 `inject`，
-  没有但有 `slots.subscribeDeclaration` 就订阅声明事件后注册，两者都没有才退回「立即尝试 + 700ms
-  退避重试」。同时只有 `slots.register` 缺失才禁用面板。附带修好一处旧实现在重挂载下的失效：
-  槽位塌缩重建后宿主会丢弃原有条目，之前 `registered` 标记粘住不再重试，现在由 `declarationEpoch`
-  判断是否真的换了声明周期，变了就重新注册，同一声明周期内不重复注册（否则宿主抛 `already has an entry`）。
-- **文档：安装命令的版本引用同步到 `#v1.4.0`。** `README.md` 与 `README.en.md` 两版同步；
-  README 兼容段同时修掉两处与代码不符的描述（槽位名写成 `shell.overlay`、条目名写成
-  `question-history`、重试次数写 ≤7 而代码实际是 12）。
-
-## [1.3.2] - 2026-11-02
-=======
 ### Added
 
 - **标题栏「大纲」按钮自适应（icon-only）—— 复用宿主原生容器查询机制。** 之前的行为：按钮恒为
@@ -48,8 +20,6 @@
   原生逐字符相等）、选择器对位、两态布局模拟（宽度由解析产物 CSS 驱动，窄态 < 全宽 60%）、
   降级断言，及 2 组变异自证。
 
-### Added
-
 - **一次性兼容性诊断日志（快照形状 + 宿主 DOM 契约）。**
   - 之前的行为：插件对宿主 DOM 属性（`data-chat-anchor-key` / `data-message-key` / `data-node-key` /
     `data-chat-flow-kind` / `data-conversation-scroll`）和会话快照结构（`legacy.nodes` / `nodes` /
@@ -63,17 +33,8 @@
   - 回归判据：新增 `test/diagnostics.test.js` —— DOM 契约齐全 / 缺项 / 只有等价锚点的探测矩阵；健康与
     降级两种日志都只输出一次；快照形状矩阵（含 `nodes.values` 与陌生形状）；陌生形状告警；数据尚未
     到达（`undefined` / `{}`）时不消耗那次机会。
->>>>>>> 75dc82d (feat(panel): 快照形状与宿主 DOM 契约的一次性诊断日志)
 
 ### Fixed
-
-- **面板首次打开时抛 `TypeError: Cannot read properties of undefined (reading 'length')`，要等重新挂载才出目录。**
-  之前：槽位下发的 hook 工厂形态会随渲染变化（`sessionId` 由空变非空时少调一次 `useSessions`），
-  面板内 hook 槽位整体错位，`useMemo` 比较上一轮 deps 时读到 `undefined` 即抛错；异常被错误边界兜住后，
-  面板要等 key 变化重挂载才恢复，表现为「首次打开闪一下才有内容」。
-  现在：hook 调用次数钉死（固定 3 次会话 selector + 1 次节点 selector，缺哪一路用占位钩子顶替），
-  `state.tree` / `state.visible` 统一按数组兜底，错误边界改为静默降级 + 退避重试（≤5 次）；
-  面板首帧即可稳定出目录，不再依赖重挂载自愈。
 
 - **槽位 props 为空时不再「永远空态」：面板改从宿主服务（`sessions` / `uiSession`）取当前会话快照。**
   - 之前的行为：面板只从 slot props 的 `useChat` / `useSession` / `useSessions` 取数据。宿主在
@@ -104,6 +65,44 @@
   - 回归判据：`test/host-service.test.js` 新增 3 条 —— `panelMountStateOf` 的状态矩阵（无服务 / 未就绪 /
     超时 / 就绪）；未就绪时只出现占位、不出现面板空态；从未就绪切到就绪时槽位组件**自身**的 hook 序列
     不变（断言里按 depth 把子组件 hook 排除）。
+
+
+## [1.4.0] - 2026-11-02
+
+### Added
+
+- **面板背景透明度可调。** 之前面板底色恒为主题令牌的纯色，挡住正文时只能靠拖走或收起面板绕开；
+  现在面板底部多一条滑杆，可把背景不透明度调到 40%~100%（默认 100%，观感与之前完全一致）。
+  只降低底色、不降低文字，避免半透明后正文反而看不清；调暗时自动按比例加背景模糊。
+  点右侧百分比或双击滑杆恢复完全不透明。该值与 `pinned` / 位置一起写进 `dsh-conversation:panel`，
+  重载后保持；老用户的快照里没有这个字段，升级后仍是完全不透明。
+- **旧宿主上不显示透明度滑杆。** `color-mix` 需要 Chromium 111+，更老的宿主会整行丢弃该声明、
+  底色恒为纯色。之前那种情况下滑杆会「拖了没反应」；现在改为先探测能力，不支持就整行不渲染，
+  面板维持完全不透明，不留下无效控件。
+
+### Changed
+
+- **槽位注册改为三通道兜底。** 之前把 `ctx.slots.inject` 当成硬依赖：宿主一旦移除或改名该 API，
+  面板整块消失，只留一条 `console.warn`。现在按宿主实际能力选通道——有 `inject` 走 `inject`，
+  没有但有 `slots.subscribeDeclaration` 就订阅声明事件后注册，两者都没有才退回「立即尝试 + 700ms
+  退避重试」。同时只有 `slots.register` 缺失才禁用面板。附带修好一处旧实现在重挂载下的失效：
+  槽位塌缩重建后宿主会丢弃原有条目，之前 `registered` 标记粘住不再重试，现在由 `declarationEpoch`
+  判断是否真的换了声明周期，变了就重新注册，同一声明周期内不重复注册（否则宿主抛 `already has an entry`）。
+- **文档：安装命令的版本引用同步到 `#v1.4.0`。** `README.md` 与 `README.en.md` 两版同步；
+  README 兼容段同时修掉两处与代码不符的描述（槽位名写成 `shell.overlay`、条目名写成
+  `question-history`、重试次数写 ≤7 而代码实际是 12）。
+
+## [1.3.2] - 2026-11-02
+
+### Fixed
+
+- **面板首次打开时抛 `TypeError: Cannot read properties of undefined (reading 'length')`，要等重新挂载才出目录。**
+  之前：槽位下发的 hook 工厂形态会随渲染变化（`sessionId` 由空变非空时少调一次 `useSessions`），
+  面板内 hook 槽位整体错位，`useMemo` 比较上一轮 deps 时读到 `undefined` 即抛错；异常被错误边界兜住后，
+  面板要等 key 变化重挂载才恢复，表现为「首次打开闪一下才有内容」。
+  现在：hook 调用次数钉死（固定 3 次会话 selector + 1 次节点 selector，缺哪一路用占位钩子顶替），
+  `state.tree` / `state.visible` 统一按数组兜底，错误边界改为静默降级 + 退避重试（≤5 次）；
+  面板首帧即可稳定出目录，不再依赖重挂载自愈。
 
 ### Changed
 
