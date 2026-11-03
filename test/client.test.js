@@ -117,7 +117,8 @@ test('internals export list covers helpers, components and test seams', () => {
       'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'buildOutlineItems',
       'conversationNodesOf', 'createHostBridge', 'mainSessionIdOf', 'makeSessionBindingSelector',
       'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'probeDomContract', 'readHostService',
-      'reportDomContractOnce', 'reportSnapshotShapeOnce', 'resetDiagnostics', 'resolveSlotChannel',
+      'reportDomContractOnce', 'reportSnapshotShapeOnce', 'resetDiagnostics', 'resolveResizedLeft',
+      'resolveSlotChannel',
       'safeNodesOf', 'snapshotRows', 'snapshotShapeOf', 'snapshotSourceOf', 'textBlocks', 'userText',
     ])
   for (const [name, fn] of Object.entries(api.internals)) assert.equal(typeof fn, 'function', `${name} must be a function`)

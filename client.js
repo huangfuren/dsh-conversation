@@ -870,6 +870,42 @@ window.__ModuleLoader__.load({
 			full: { width: 720, height: "calc(100vh - 56px)" },
 		};
 
+		/**
+		 * 换档时的横向生长方向：贴左向右、贴右向左、居中两侧对称。
+		 *
+		 * 面板是 fixed 浮层（不占布局），换档时哪条边不动决定了观感。判据是
+		 * **面板离窗口边缘的距离**，而不是「离哪边近」—— 后者会让面板在窗口
+		 * 正中附近来回翻面：
+		 *
+		 * 1. 贴边（边距 ≤ EDGE_SNAP，默认停靠就是 16px）：锚住靠墙那条边，
+		 *    只朝窗口内侧长。加宽是抽屉拉开，缩窄是抽屉推回，右缘始终不动，
+		 *    不会白撑边距去压右侧栏；
+		 * 2. 居中：中心不动，两侧各长一半；
+		 * 3. 兜底：两种情况都可能因为窗口太窄而算到界外，统一夹回 [0, vw - w]。
+		 *
+		 * 停靠态（从未拖拽）不走这里：left/right 锚点本身就固定了靠墙边，
+		 * 返回值 null 表示只需换档、不用动坐标。
+		 */
+		const EDGE_SNAP = 32;
+		function resolveResizedLeft(prevLeft, prevWidth, nextWidth, viewportWidth) {
+			if (typeof prevLeft !== "number" || Number.isFinite(prevLeft) === false) return null;
+			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
+			if (vw === 0) return prevLeft;
+			const maxLeft = Math.max(0, vw - nextWidth);
+			const prevRight = prevLeft + prevWidth;
+			const leftGap = Math.max(0, prevLeft);
+			const rightGap = Math.max(0, vw - prevRight);
+			// 贴右：右缘不动。用 prevRight 而非窗口右缘，保住默认的 16px 边距。
+			if (rightGap <= EDGE_SNAP && leftGap > EDGE_SNAP) {
+				return Math.round(Math.max(0, Math.min(prevRight - nextWidth, maxLeft)));
+			}
+			// 贴左：左缘不动。
+			if (leftGap <= EDGE_SNAP && rightGap > EDGE_SNAP) {
+				return Math.round(Math.min(leftGap, maxLeft));
+			}
+			return Math.round(Math.min(maxLeft, Math.max(0, prevLeft - (nextWidth - prevWidth) / 2)));
+		}
+
 		/** 面板与首屏占位共用的定位计算：拖拽位置优先，其次按停靠边与视图档位。
 		 *  刷新时占位与真正面板落在同一位置，不会先跳回默认位置 2 秒（PR review suggestion 2）。 */
 		function outlinePanelPlacement(chrome, dockSide) {
@@ -2196,7 +2232,7 @@ window.__ModuleLoader__.load({
 				h("path", { d: "M4 2.5l4 3.5-4 3.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
 		}
 
-		/** 加宽：向两侧撑开（与全屏的"四角"图标区分开）。 */
+		/** 加宽：贴左向右、贴右向左、居中两侧对称（与全屏的"四角"图标区分开）。 */
 		function WideGlyph() {
 			return h("svg", { width: "15", height: "15", viewBox: "0 0 14 14", fill: "none", "aria-hidden": "true" },
 				h("path", { d: "M5 4.5L2.5 7 5 9.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }),
@@ -3299,7 +3335,19 @@ window.__ModuleLoader__.load({
 						title: viewLabel,
 						"aria-label": viewLabel,
 						onPointerDown: (e) => e.stopPropagation(),
-						onClick: () => store.set({ view: VIEW_ORDER[(viewIndex + 1) % VIEW_ORDER.length] }),
+						onClick: () => {
+							const nextView = VIEW_ORDER[(viewIndex + 1) % VIEW_ORDER.length];
+							const prevSize = VIEW_SIZES[chrome.view] === undefined ? VIEW_SIZES.panel : VIEW_SIZES[chrome.view];
+							const nextSize = VIEW_SIZES[nextView] === undefined ? VIEW_SIZES.panel : VIEW_SIZES[nextView];
+							// 拖拽过的面板要把新宽度重新落位，否则宽度只朝右长、右缘顶出窗口。
+							const nextLeft = resolveResizedLeft(
+								chrome.left,
+								prevSize.width,
+								nextSize.width,
+								typeof window.innerWidth === "number" ? window.innerWidth : 0,
+							);
+							store.set(nextLeft === null ? { view: nextView } : { view: nextView, left: nextLeft });
+						},
 					}, chrome.view === "full" ? h(FullGlyph) : h(WideGlyph)),
 					h("a", {
 						className: "dsh-conv-iconbtn",
@@ -3698,6 +3746,7 @@ window.__ModuleLoader__.load({
 			conversationNodesOf,
 			normalizeOpacity,
 			panelSurfaceStyle,
+			resolveResizedLeft,
 			resolveSlotChannel,
 			HistoryOutlinePanelInner,
 			HistoryOutlineSlot,
