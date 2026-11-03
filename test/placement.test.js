@@ -183,6 +183,28 @@ test('居中：中心不动，两侧各长一半', () => {
   assert.equal(left + WIDE / 2, 400 + PANEL / 2, 'center must stay put')
 })
 
+test('居中但左侧装不下：差额全部转给右侧，不是压回去只长一边', () => {
+  // 左边只剩 100，加宽要 400 ⇒ 左扩 100（用尽），右扩 300（补齐剩余）
+  const sandbox = createSandbox({ pinned: true, view: 'panel', left: 100, top: 72 })
+  const left = resize(sandbox)(100, PANEL, FULL, 1200)
+  assert.equal(left, 0, 'left side must be fully used, not half of it')
+  assert.equal(left + FULL - (100 + PANEL), 300, 'right side must absorb the shortfall')
+})
+
+test('居中但右侧装不下：差额全部转给左侧', () => {
+  // 右边只剩 180，加宽要 400 ⇒ 右扩 180（用尽），左扩 220（补齐剩余）
+  const sandbox = createSandbox({ pinned: true, view: 'panel', left: 700, top: 72 })
+  const left = resize(sandbox)(700, PANEL, FULL, 1200)
+  assert.equal(left + FULL, 1200, 'right space must be used up exactly')
+  assert.equal(left, 480)
+})
+
+test('两侧都装不下时贴住左缘，宁可右缘溢出也不出负坐标', () => {
+  const sandbox = createSandbox({ pinned: true, view: 'panel', left: 200, top: 72 })
+  const left = resize(sandbox)(200, PANEL, FULL, 700)
+  assert.equal(left, 0)
+})
+
 test('连续加宽到全屏仍贴住原右缘，不越界', () => {
   const sandbox = createSandbox({ pinned: true, view: 'wide', left: 704, top: 72 })
   const left = resize(sandbox)(704, WIDE, FULL, 1200)

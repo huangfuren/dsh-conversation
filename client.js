@@ -873,15 +873,15 @@ window.__ModuleLoader__.load({
 		/**
 		 * 换档时的横向生长方向：贴左向右、贴右向左、居中两侧对称。
 		 *
-		 * 面板是 fixed 浮层（不占布局），换档时哪条边不动决定了观感。判据是
-		 * **面板离窗口边缘的距离**，而不是「离哪边近」—— 后者会让面板在窗口
-		 * 正中附近来回翻面：
+		 * 面板是 fixed 浮层（不占布局），换档时哪条边不动决定了观感。实现直接写成
+		 * 「两侧各分多少」，而不是「先算对称再夹回窗口」—— 后者虽然等价，却看不出
+		 * 一侧空间不足时差额去哪了：
 		 *
-		 * 1. 贴边（边距 ≤ EDGE_SNAP，默认停靠就是 16px）：锚住靠墙那条边，
-		 *    只朝窗口内侧长。加宽是抽屉拉开，缩窄是抽屉推回，右缘始终不动，
-		 *    不会白撑边距去压右侧栏；
-		 * 2. 居中：中心不动，两侧各长一半；
-		 * 3. 兜底：两种情况都可能因为窗口太窄而算到界外，统一夹回 [0, vw - w]。
+		 * 1. 贴边（边距 ≤ EDGE_SNAP，默认停靠就是 16px）：靠墙那侧分 0，整份长度
+		 *    全给另一侧 ⇒ 加宽是抽屉拉开、缩窄是抽屉推回，靠墙那条边始终不动；
+		 * 2. 居中：两侧各分一半；某一侧空间不够时，差额转给另一侧（不是压回去
+		 *    只长一边，也不是把面板推出窗口）；
+		 * 3. 兜底：两侧加起来仍不够（窗口比目标宽度还窄）时，按各自空间夹一次。
 		 *
 		 * 停靠态（从未拖拽）不走这里：left/right 锚点本身就固定了靠墙边，
 		 * 返回值 null 表示只需换档、不用动坐标。
@@ -891,19 +891,37 @@ window.__ModuleLoader__.load({
 			if (typeof prevLeft !== "number" || Number.isFinite(prevLeft) === false) return null;
 			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
 			if (vw === 0) return prevLeft;
+			const delta = nextWidth - prevWidth;
+			const leftSpace = Math.max(0, prevLeft);
+			const rightSpace = Math.max(0, vw - prevLeft - prevWidth);
+			let growLeft;
+			let growRight;
+			if (leftSpace <= EDGE_SNAP) {
+				// 贴左：左缘不动，整份长度向右
+				growLeft = 0;
+				growRight = delta;
+			} else if (rightSpace <= EDGE_SNAP) {
+				// 贴右：右缘不动，整份长度向左
+				growLeft = delta;
+				growRight = 0;
+			} else {
+				growLeft = delta / 2;
+				growRight = delta - growLeft;
+			}
+			// 一侧装不下就把差额让给另一侧（缩窄时 delta < 0，两侧都不受空间限制）
+			if (growLeft > leftSpace) {
+				growRight += growLeft - leftSpace;
+				growLeft = leftSpace;
+			}
+			if (growRight > rightSpace) {
+				growLeft += growRight - rightSpace;
+				growRight = rightSpace;
+			}
+			// 二次夹：窗口比目标宽度还窄时哪边都放不下，只能贴住左缘
+			growLeft = Math.min(growLeft, leftSpace);
+			const left = prevLeft - growLeft;
 			const maxLeft = Math.max(0, vw - nextWidth);
-			const prevRight = prevLeft + prevWidth;
-			const leftGap = Math.max(0, prevLeft);
-			const rightGap = Math.max(0, vw - prevRight);
-			// 贴右：右缘不动。用 prevRight 而非窗口右缘，保住默认的 16px 边距。
-			if (rightGap <= EDGE_SNAP && leftGap > EDGE_SNAP) {
-				return Math.round(Math.max(0, Math.min(prevRight - nextWidth, maxLeft)));
-			}
-			// 贴左：左缘不动。
-			if (leftGap <= EDGE_SNAP && rightGap > EDGE_SNAP) {
-				return Math.round(Math.min(leftGap, maxLeft));
-			}
-			return Math.round(Math.min(maxLeft, Math.max(0, prevLeft - (nextWidth - prevWidth) / 2)));
+			return Math.round(Math.min(maxLeft, Math.max(0, left)));
 		}
 
 		/** 面板与首屏占位共用的定位计算：拖拽位置优先，其次按停靠边与视图档位。
