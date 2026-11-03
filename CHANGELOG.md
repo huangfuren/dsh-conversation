@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-11-03
+
+### Changed
+
+- **把已停用的刻度条 / 胶囊按钮代码就地注释保留，并逐段写明原因。** 这不是功能改动，
+  运行时行为与 v1.5.4 完全一致：右侧刻度条（`.dsh-conv-rail` 全部样式、`SessionRail`、
+  `HistoryOutlineRailWrapper`）与右上角胶囊（`.dsh-conv-fab`）自 `7a525af`「remove duplicate
+  rail」起不再被挂载，代码却一直留在原处，读代码的人会误以为该功能只是被关掉了。本次给每段
+  加上「停用保留」说明块，写清三件事：**失效原因**（渲染点在哪个 commit 移除、当前没有可达路径）、
+  **保留原因**（留待功能重启时复用，不删以便原地恢复）、**恢复方式**（去掉注释标记并恢复组件与槽位注册）。
+  涉及：CSS 两段（`.dsh-conv-fab` 约 20 行、`.dsh-conv-rail` 约 80 行）、`SessionRail` 与
+  `HistoryOutlineRailWrapper` 两个组件、六条刻度条文案（含两条错放在中文词典里的英文残留）、
+  store 的 `rail` 字段、`prefers-reduced-motion` 中指向这两个不存在 class 的两个选择器，
+  以及槽位文档里描述刻度条的第 3 条。老 localStorage 中的 `rail` 键不会被清除，只是不再读取。
+
 ## [1.5.4] - 2026-11-03
 
 ### Fixed

@@ -695,6 +695,12 @@ window.__ModuleLoader__.load({
         text-transform: uppercase;
         letter-spacing: 0.03em;
       }
+      /* ==== 停用保留：右上角胶囊按钮样式（.dsh-conv-fab） ====
+         失效原因：没有任何组件产出该 class 的元素，1.3.1 起面板收起态的唯一入口是标题栏按钮。
+         保留原因：维护者决定留待刻度条功能重启时配套复用，只注释不删除。
+         恢复方式：删掉下面代码块首尾的 CSS 注释标记，并重新引入产出该 class 的组件。
+         停用日期：2026-11-03（v1.5.4 之后）。 */
+      /*
       .dsh-conv-fab {
         position: fixed;
         top: 72px;
@@ -715,6 +721,7 @@ window.__ModuleLoader__.load({
         background: var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06));
         color: var(--dsw-alias-state-business-primary, #4176e6);
       }
+      */
       .dsh-conv-flash { animation: dsh-conv-flash 1.6s ease-out; border-radius: 4px; }
       @keyframes dsh-conv-flash {
         0% { background-color: var(--dsw-alias-state-business-tertiary, rgba(65, 118, 230, 0.18)); }
@@ -762,7 +769,13 @@ window.__ModuleLoader__.load({
         border-color: var(--dsw-alias-state-business-primary, #4176e6);
         background: var(--dsw-alias-state-business-tertiary, #e4edfd);
       }
-      /* ---- 侧边刻度条（面板收起时的常驻导航） ---- */
+      /* ==== 停用保留：右侧刻度条样式（.dsh-conv-rail 及子类，约 80 行） ====
+         失效原因：产出这些 class 的组件 SessionRail / HistoryOutlineRailWrapper 均已停用，
+                   页面上不会出现对应元素，样式不生效。
+         保留原因：维护者决定留待刻度条功能重启时复用，只注释不删除。
+         恢复方式：删掉下面代码块首尾的 CSS 注释标记，并恢复组件与槽位注册。
+         停用日期：2026-11-03（v1.5.4 之后）。 */
+      /*
       .dsh-conv-rail {
         position: fixed;
         right: 0;
@@ -842,12 +855,15 @@ window.__ModuleLoader__.load({
         opacity: 0.7;
       }
       .dsh-conv-railtick-active .dsh-conv-railfill { opacity: 1; }
+      */
       /* ---- 全屏档位：更方的角、贴边留白更小 ---- */
       .dsh-conv-panel-full { border-radius: 14px; }
       @media (prefers-reduced-motion: reduce) {
-        .dsh-conv-panel *,
-        .dsh-conv-fab,
-        .dsh-conv-rail * {
+        /* 停用保留：这里原本还并列 .dsh-conv-fab 与 .dsh-conv-rail *，两者元素已不渲染
+           （见上方两段停用说明），为避免选择器指向不存在的 class，只保留面板自身。 */
+        /* .dsh-conv-fab, */
+        /* .dsh-conv-rail * */
+        .dsh-conv-panel * {
           transition-duration: 0.01ms !important;
           animation: none !important;
         }
@@ -1090,8 +1106,9 @@ window.__ModuleLoader__.load({
 			"panel.viewPanel": "紧凑宽度",
 			"panel.viewWide": "加宽面板",
 			"panel.viewFull": "全屏展开",
-			"panel.railHide": "隐藏侧边刻度条",
-			"panel.railShow": "显示侧边刻度条",
+			// 停用保留：刻度条显隐开关文案（刻度条组件已注释，见 SessionRail 段）。
+			// "panel.railHide": "隐藏侧边刻度条",
+			// "panel.railShow": "显示侧边刻度条",
 			"search.placeholder": "搜索大纲…",
 			"search.clear": "清除搜索",
 			"search.scope.all": "全部",
@@ -1111,8 +1128,9 @@ window.__ModuleLoader__.load({
 			"action.sectionEnd": "双击跳到本节末尾",
 			"meta.tools": "{count} 工具",
 			"meta.chars": "{count} 字",
-			"rail.title": "会话刻度条：每根刻度是一轮提问，点击跳转",
-			"rail.open": "展开大纲面板",
+			// 停用保留：刻度条中文文案（组件 SessionRail 已注释，见本文件同名段落）。
+			// "rail.title": "会话刻度条：每根刻度是一轮提问，点击跳转",
+			// "rail.open": "展开大纲面板",
 			"action.scrollTop": "回到顶部",
 			"action.scrollBottom": "回到底部",
 			"action.unlocatable": "当前节点暂不可定位",
@@ -1136,8 +1154,10 @@ window.__ModuleLoader__.load({
 			"panel.viewPanel": "Compact width",
 			"panel.viewWide": "Wide panel",
 			"panel.viewFull": "Full height",
-			"panel.railHide": "Hide edge rail",
-			"panel.railShow": "Show edge rail",
+			// 停用保留：刻度条显隐开关文案。注意这两条落在中文词典里、值却是英文，
+			// 且英文词典中并没有同名键 —— 属于更早那次移除留下的残留，一并注释。
+			// "panel.railHide": "Hide edge rail",
+			// "panel.railShow": "Show edge rail",
 			"search.placeholder": "Search outline…",
 			"search.clear": "Clear search",
 			"search.scope.all": "All",
@@ -1157,8 +1177,9 @@ window.__ModuleLoader__.load({
 			"action.sectionEnd": "Double-click to jump to the end of this section",
 			"meta.tools": "{count} tools",
 			"meta.chars": "{count} chars",
-			"rail.title": "Session rail: one tick per question, click to jump",
-			"rail.open": "Open outline panel",
+			// 停用保留：刻度条英文文案（组件 SessionRail 已注释，见本文件同名段落）。
+			// "rail.title": "Session rail: one tick per question, click to jump",
+			// "rail.open": "Open outline panel",
 			"action.scrollTop": "Scroll to top",
 			"action.scrollBottom": "Scroll to bottom",
 			"action.unlocatable": "This item is not available yet",
@@ -2152,8 +2173,10 @@ window.__ModuleLoader__.load({
 				top: typeof picked.top === "number" ? picked.top : null,
 				// 面板尺寸档位：panel / wide / full。
 				view: VIEW_ORDER.indexOf(picked.view) === -1 ? "panel" : picked.view,
-				// 面板收起时是否显示右侧刻度条（关掉则回落为原来的胶囊按钮）。
-				rail: picked.rail === undefined ? true : picked.rail === true,
+				// 停用保留：面板收起时是否显示右侧刻度条（原默认 true）。
+				// 刻度条渲染点已在 7a525af 移除，此字段自此只写不读，故一并注释掉。
+				// 老 localStorage 里的 rail 键不会被清除、但也读不到；恢复这行即可继续复用旧值。
+				// rail: picked.rail === undefined ? true : picked.rail === true,
 				// 面板背景不透明度；老用户没有这个字段，归一化后落到 100，观感不变。
 				opacity: normalizeOpacity(picked.opacity),
 			};
@@ -2392,36 +2415,42 @@ window.__ModuleLoader__.load({
 				h("path", { d: "M7 2v7M4.2 6.4L7 9.2l2.8-2.8M2.5 11.5h9", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
 		}
 
-		/**
-		 * 侧边刻度条（面板收起时的常驻导航）：一 tick = 一轮提问，
-		 * fill 的宽度按该轮正文长度归一化 —— 顺带成了对话的"密度图"。
-		 */
-		const SessionRail = function SessionRail(props) {
-			const ticks = [];
-			for (const tick of props.ticks) {
-				const ratio = props.maxChars <= 0
-					? 0.3
-					: Math.max(0.12, Math.min(1, tick.charCount / props.maxChars));
-				const active = tick.id === props.activeTickId;
-				ticks.push(h("button", {
-					key: tick.id,
-					type: "button",
-					className: active ? "dsh-conv-railtick dsh-conv-railtick-active" : "dsh-conv-railtick",
-					title: "Q" + (tick.queryIndex === undefined ? "" : tick.queryIndex) + " · " + tick.text,
-					"aria-label": tick.text,
-					onClick: () => props.onJump(tick),
-				}, h("span", { className: "dsh-conv-railfill", style: { width: Math.round(ratio * 100) + "%" } })));
-			}
-			return h("div", { className: "dsh-conv-rail", role: "navigation", "aria-label": props.t("rail.title") },
-				h("button", {
-					type: "button",
-					className: "dsh-conv-railbtn",
-					title: props.t("rail.open"),
-					"aria-label": props.t("rail.open"),
-					onClick: props.onOpen,
-				}, h(OutlineGlyph)),
-				ticks.length === 0 ? null : h("div", { className: "dsh-conv-railticks" }, ticks));
-		};
+// ==== 停用保留：右侧刻度条组件 SessionRail ====
+// 失效原因：唯一调用方是本文件后部的 HistoryOutlineRailWrapper，而它同样已停用，
+//           因此这个组件没有任何可达路径，渲染不出任何东西。
+// 保留原因：维护者决定留待刻度条功能重启时复用，只注释不删除。
+// 恢复方式：去掉本段每行行首的注释符，并恢复 wrapper 的槽位注册。
+// 停用日期：2026-11-03（v1.5.4 之后）。
+		// /**
+		 // * 侧边刻度条（面板收起时的常驻导航）：一 tick = 一轮提问，
+		 // * fill 的宽度按该轮正文长度归一化 —— 顺带成了对话的"密度图"。
+		 // */
+		// const SessionRail = function SessionRail(props) {
+			// const ticks = [];
+			// for (const tick of props.ticks) {
+				// const ratio = props.maxChars <= 0
+					// ? 0.3
+					// : Math.max(0.12, Math.min(1, tick.charCount / props.maxChars));
+				// const active = tick.id === props.activeTickId;
+				// ticks.push(h("button", {
+					// key: tick.id,
+					// type: "button",
+					// className: active ? "dsh-conv-railtick dsh-conv-railtick-active" : "dsh-conv-railtick",
+					// title: "Q" + (tick.queryIndex === undefined ? "" : tick.queryIndex) + " · " + tick.text,
+					// "aria-label": tick.text,
+					// onClick: () => props.onJump(tick),
+				// }, h("span", { className: "dsh-conv-railfill", style: { width: Math.round(ratio * 100) + "%" } })));
+			// }
+			// return h("div", { className: "dsh-conv-rail", role: "navigation", "aria-label": props.t("rail.title") },
+				// h("button", {
+					// type: "button",
+					// className: "dsh-conv-railbtn",
+					// title: props.t("rail.open"),
+					// "aria-label": props.t("rail.open"),
+					// onClick: props.onOpen,
+				// }, h(OutlineGlyph)),
+				// ticks.length === 0 ? null : h("div", { className: "dsh-conv-railticks" }, ticks));
+		// };
 
 		function LevelSlider(props) {
 			stg("child:LevelSlider");
@@ -3694,47 +3723,53 @@ window.__ModuleLoader__.load({
 					: null);
 		}
 
-		/**
-		 * 独立侧边刻度条包装器：在未展开面板且 rail=true 时在右侧边缘显示刻度条。
-		 */
-		function HistoryOutlineRailWrapper(props) {
-			const safeProps = props === undefined || props === null ? {} : props;
-			const store = safeProps.store;
-			const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
-
-			/* 同面板：hook 调用次数钉死，缺哪一路就用占位钩子，避免顺序漂移 */
-			const nodesSource = typeof safeProps.useChat === "function" ? safeProps.useChat
-				: (typeof safeProps.useSession === "function" ? safeProps.useSession : useNoNodes);
-			const nodes = nodesSource(conversationNodesOf) || EMPTY_NODES;
-
-			const items = useMemo(() => {
-				if (!nodes || nodes.length === 0) return [];
-				try {
-					return buildOutlineItems(nodes);
-				} catch (_) {
-					return [];
-				}
-			}, [nodes]);
-
-			const ticks = items.filter((item) => item.isUserQuery === true).map((item, idx) => ({
-				id: item.key ?? ("turn-" + idx),
-				queryIndex: item.userIndex,
-				text: item.text,
-				charCount: typeof item.charCount === "number" ? item.charCount : 0,
-			}));
-			const maxChars = ticks.reduce((max, tick) => (tick.charCount > max ? tick.charCount : max), 0);
-
-			return h(SessionRail, {
-				ticks,
-				maxChars,
-				activeTickId: null,
-				onJump: () => {
-					store.set({ pinned: true });
-				},
-				onOpen: () => store.set({ pinned: true }),
-				t,
-			});
-		}
+// ==== 停用保留：右侧刻度条包装器 HistoryOutlineRailWrapper ====
+// 失效原因：全文件没有任何槽位注册或 JSX 引用它（唯一的槽位注册是面板本身），
+//           刻度条自 7a525af「remove duplicate rail」起不再挂载；面板收起态改为只用标题栏按钮。
+// 保留原因：维护者决定留待刻度条功能重启时复用，只注释不删除，便于原地恢复。
+// 恢复方式：去掉本段每行行首的注释符，并重新为它注册槽位。
+// 停用日期：2026-11-03（v1.5.4 之后）。
+		// /**
+		 // * 独立侧边刻度条包装器：在未展开面板且 rail=true 时在右侧边缘显示刻度条。
+		 // */
+		// function HistoryOutlineRailWrapper(props) {
+			// const safeProps = props === undefined || props === null ? {} : props;
+			// const store = safeProps.store;
+			// const t = useMemo(() => makeTranslate(safeProps.t), [safeProps.t]);
+//
+			// /* 同面板：hook 调用次数钉死，缺哪一路就用占位钩子，避免顺序漂移 */
+			// const nodesSource = typeof safeProps.useChat === "function" ? safeProps.useChat
+				// : (typeof safeProps.useSession === "function" ? safeProps.useSession : useNoNodes);
+			// const nodes = nodesSource(conversationNodesOf) || EMPTY_NODES;
+//
+			// const items = useMemo(() => {
+				// if (!nodes || nodes.length === 0) return [];
+				// try {
+					// return buildOutlineItems(nodes);
+				// } catch (_) {
+					// return [];
+				// }
+			// }, [nodes]);
+//
+			// const ticks = items.filter((item) => item.isUserQuery === true).map((item, idx) => ({
+				// id: item.key ?? ("turn-" + idx),
+				// queryIndex: item.userIndex,
+				// text: item.text,
+				// charCount: typeof item.charCount === "number" ? item.charCount : 0,
+			// }));
+			// const maxChars = ticks.reduce((max, tick) => (tick.charCount > max ? tick.charCount : max), 0);
+//
+			// return h(SessionRail, {
+				// ticks,
+				// maxChars,
+				// activeTickId: null,
+				// onJump: () => {
+					// store.set({ pinned: true });
+				// },
+				// onOpen: () => store.set({ pinned: true }),
+				// t,
+			// });
+		// }
 
 		/**
 		 * 首屏占位（pinned 且会话数据未就绪）：与面板同位置、同外壳，
@@ -3768,7 +3803,9 @@ window.__ModuleLoader__.load({
 		 * 1. 无论面板开闭，Header 工具栏中永远渲染一个稳固的「大纲」操作按钮，绝不会消失！
 		 * 2. pinned === true 且会话数据就绪后，同级挂载悬浮大纲面板；
 		 *    数据未就绪时先渲染占位（见 panelMountStateOf），就绪后再挂载。
-		 * 3. pinned === false 且 rail === true 时，同级挂载右边缘刻度滑轨。
+		 * 3. 原第 3 条「pinned === false 且 rail === true 时，同级挂载右边缘刻度滑轨」已停用（2026-11-03）：
+		 *    刻度条组件与右侧刻度条包装器都在本文件内注释保留（搜索「停用保留」），
+		 *    面板收起态仍然只由标题栏按钮进入，不再有边缘刻度条。
 		 */
 		function HistoryOutlineSlot(props) {
 			const safeProps = props === undefined || props === null ? {} : props;
