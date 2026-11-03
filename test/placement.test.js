@@ -86,7 +86,7 @@ function createSandbox(chromePatch, options = {}) {
     console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
     setTimeout, clearTimeout, setInterval, clearInterval,
     innerWidth: options.innerWidth === undefined ? 1200 : options.innerWidth,
-    innerHeight: 800,
+    innerHeight: options.innerHeight === undefined ? 800 : options.innerHeight,
     navigator: { language: 'zh-CN', languages: ['zh-CN'] },
     document: {
       querySelector: () => null,
@@ -144,7 +144,10 @@ function renderPanel(sandbox) {
 }
 
 function panelOf(tree) {
-  return flatten(tree).find((n) => n.props && n.props.className === 'dsh-conv-panel')
+  return flatten(tree).find(
+    (n) => n.props && typeof n.props.className === 'string'
+      && n.props.className.split(/\s+/).includes('dsh-conv-panel'),
+  )
 }
 
 /** 标题栏里的换档按钮：文案随档位变化（加宽 / 全屏 / 回到紧凑），按三种之一匹配。 */
@@ -280,4 +283,60 @@ test('三轮循环回到紧凑档，贴右面板不累积漂移', () => {
   const back = sandbox.__saved()
   assert.equal(back.view, 'panel')
   assert.equal(back.left, 864, 'returning to compact must restore the original left edge')
+})
+
+// ---- 视口钳制：窗口拉窄后，拖拽坐标可能整块落在视口外（面板"点了不出来"） ----
+
+test('窗口变窄后越界的拖拽坐标被夹回视口内', () => {
+  // 真实事故现场：left 存自更宽的窗口，现在视口只有 1080
+  const sandbox = createSandbox({ pinned: true, view: 'panel', left: 1386, top: 140 }, { innerWidth: 1080, innerHeight: 681 })
+  const clamp = sandbox.__module.internals.clampPlacementToViewport
+  const out = clamp({ width: PANEL, height: 480, left: 1386, top: 140 }, 1080, 681)
+  assert.equal(out.left, 760, 'panel right edge must sit on the viewport edge')
+  assert.equal(out.top, 140, 'legal top must be left alone')
+  assert.equal(clamp({ width: PANEL, height: 480, left: 1386, top: 140 }, 1080, 681).left + PANEL, 1080)
+})
+
+test('top 越界时只保证露出标题栏', () => {
+  const sandbox = createSandbox({ pinned: true, view: 'panel', left: 100, top: 700 }, { innerWidth: 1080, innerHeight: 681 })
+  const clamp = sandbox.__module.internals.clampPlacementToViewport
+  const out = clamp({ width: PANEL, height: 480, left: 100, top: 700 }, 1080, 681)
+  assert.equal(out.top, 601, '80px of the panel must stay reachable')
+  assert.equal(clamp({ width: PANEL, height: 480, left: 100, top: 700 }, 1080, 681).top, 681 - 80)
+})
+
+test('停靠态（right 锚点）与合法坐标都不被改动', () => {
+  const sandbox = createSandbox({ pinned: true, view: 'panel' })
+  const clamp = sandbox.__module.internals.clampPlacementToViewport
+  const docked = { width: PANEL, height: 480, right: 16, top: 72 }
+  const keptDock = clamp(docked, 1080, 681)
+  assert.equal(keptDock.right, 16)
+  assert.equal(keptDock.left, undefined, 'docked placement has no left to clamp')
+
+  const ok = clamp({ width: PANEL, height: 480, left: 400, top: 120 }, 1080, 681)
+  assert.equal(ok.left, 400)
+  assert.equal(ok.top, 120)
+  assert.equal(ok.width, PANEL)
+
+  // 视口未知（单测/非浏览器）时不做任何猜测
+  assert.equal(clamp({ width: PANEL, height: 480, left: 1386, top: 140 }, 0, 0).left, 1386)
+})
+
+test('渲染时套用钳制：越界的持久化坐标不会让面板消失', () => {
+  const sandbox = createSandbox(
+    { pinned: true, view: 'panel', left: 1386, top: 140 },
+    { innerWidth: 1080, innerHeight: 681 },
+  )
+  const panel = panelOf(renderPanel(sandbox))
+  assert.equal(panel.props.style.left, 760)
+  assert.equal(panel.props.style.width, PANEL)
+  // 持久化值保持原样：窗口拉回去时位置还在原处
+  assert.equal(sandbox.__saved().left, 1386)
+})
+
+test('全屏档窗口比面板还窄时贴住左缘', () => {
+  const sandbox = createSandbox({ pinned: true, view: 'full', left: 800, top: 40 }, { innerWidth: 700, innerHeight: 600 })
+  const panel = panelOf(renderPanel(sandbox))
+  assert.equal(panel.props.style.left, 0)
+  assert.equal(panel.props.style.width, FULL)
 })

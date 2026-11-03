@@ -937,13 +937,53 @@ window.__ModuleLoader__.load({
 				? { width: size.width, height: size.height, left: 16, top }
 				: { width: size.width, height: size.height, right: 16, top };
 		}
+		/** 当前视口尺寸；非浏览器环境（单测）返回 0，调用方据此跳过钳制。 */
+		function currentViewport() {
+			try {
+				if (typeof window === "undefined" || window === null) return { width: 0, height: 0 };
+				return {
+					width: typeof window.innerWidth === "number" ? window.innerWidth : 0,
+					height: typeof window.innerHeight === "number" ? window.innerHeight : 0,
+				};
+			} catch (e) {
+				return { width: 0, height: 0 };
+			}
+		}
+
 		/**
-		 * 面板外壳样式 = 定位 + （宿主支持 color-mix 时）背景透明度变量。
+		 * 视口兜底：拖拽坐标是按「当时那个窗口」存的，窗口被拉窄（或换了更小的显示器）之后，
+		 * 面板会整块落在视口右侧之外 —— 表现为「点了大纲按钮，什么都不出来」，而窗口最大化后
+		 * 又正常。这里只在渲染时钳制，不回写 localStorage：把窗口拉回去时位置还是原来的。
+		 *
+		 * 停靠态返回的是 right 锚点（没有 left），天然贴边，不需要处理。
+		 * top 只要求露出标题栏（MIN_PANEL_VISIBLE_HEIGHT），够把它拖回来就行。
+		 */
+		const MIN_PANEL_VISIBLE_HEIGHT = 80;
+		function clampPlacementToViewport(placement, viewportWidth, viewportHeight) {
+			if (typeof placement.left !== "number") return placement;
+			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
+			if (vw === 0) return placement;
+			const maxLeft = Math.max(0, vw - placement.width);
+			const left = Math.min(maxLeft, Math.max(0, placement.left));
+			const vh = typeof viewportHeight === "number" && viewportHeight > 0 ? viewportHeight : 0;
+			const top = typeof placement.top !== "number"
+				? placement.top
+				: (vh === 0 ? placement.top : Math.min(Math.max(0, vh - MIN_PANEL_VISIBLE_HEIGHT), Math.max(0, placement.top)));
+			return Object.assign({}, placement, { left, top });
+		}
+
+		/**
+		 * 面板外壳样式 = 定位（含视口钳制） + （宿主支持 color-mix 时）背景透明度变量。
 		 * 首屏占位与真面板必须走同一个函数：占位只写定位的话，变量回落 100%，
 		 * 就绪瞬间面板会从完全不透明「跳」到用户设定值。
 		 */
 		function panelSurfaceStyle(chrome, dockSide, alphaSupported) {
-			const placement = outlinePanelPlacement(chrome, dockSide);
+			const viewport = currentViewport();
+			const placement = clampPlacementToViewport(
+				outlinePanelPlacement(chrome, dockSide),
+				viewport.width,
+				viewport.height,
+			);
 			if (alphaSupported !== true) return placement;
 			const opacity = normalizeOpacity(chrome === null || chrome === undefined ? undefined : chrome.opacity);
 			return Object.assign({
@@ -2799,6 +2839,31 @@ window.__ModuleLoader__.load({
 		 * - 服务可用但还没有会话绑定 ⇒ pending（除非等待超时）；
 		 * - 有会话绑定 ⇒ mount（此时 chat 快照可能仍是空数组，面板展示空态）。
 		 */
+		/**
+		 * 窗口尺寸变化时让调用方重渲染一次：面板位置是按旧视口算的，窗口拉窄后
+		 * 拖拽坐标会整块落到视口外。rAF 节流，拖动窗口时不会每个事件都渲染。
+		 */
+		function useViewportTick() {
+			const [tick, setTick] = useState(0);
+			useEffect(() => {
+				if (typeof window === "undefined" || window === null || typeof window.addEventListener !== "function") return undefined;
+				let raf = 0;
+				const onResize = () => {
+					if (raf !== 0) return;
+					raf = window.requestAnimationFrame(() => {
+						raf = 0;
+						setTick((n) => n + 1);
+					});
+				};
+				window.addEventListener("resize", onResize);
+				return () => {
+					window.removeEventListener("resize", onResize);
+					if (raf !== 0) window.cancelAnimationFrame(raf);
+				};
+			}, []);
+			return tick;
+		}
+
 		function panelMountStateOf(hostSession, timedOut) {
 			if (hostSession === null || hostSession === undefined || hostSession.available !== true) return "mount";
 			if (hostSession.ready === true) return "mount";
@@ -3607,6 +3672,8 @@ window.__ModuleLoader__.load({
 
 			// 首屏闸门用到的 hook 全部无条件调用（与宿主服务是否就绪无关）。
 			const hostSession = useHostReadiness(safeProps.host);
+			// 窗口尺寸变化时重算面板位置：拖拽坐标可能已被拉窄的视口甩到外面。
+			useViewportTick();
 			const [timedOut, setTimedOut] = useState(false);
 			useEffect(() => {
 				if (hostSession.available !== true || hostSession.ready === true || timedOut === true) return undefined;
@@ -3764,6 +3831,7 @@ window.__ModuleLoader__.load({
 			conversationNodesOf,
 			normalizeOpacity,
 			panelSurfaceStyle,
+			clampPlacementToViewport,
 			resolveResizedLeft,
 			resolveSlotChannel,
 			HistoryOutlinePanelInner,
