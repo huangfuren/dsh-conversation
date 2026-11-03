@@ -340,3 +340,17 @@ test('全屏档窗口比面板还窄时贴住左缘', () => {
   assert.equal(panel.props.style.left, 0)
   assert.equal(panel.props.style.width, FULL)
 })
+
+test('停靠态（right 锚点）在窗口比面板还窄时也折算成 left: 0', () => {
+  const sandbox = createSandbox({ pinned: true, view: 'full' }, { innerWidth: 700, innerHeight: 600 })
+  const clamp = sandbox.__module.internals.clampPlacementToViewport
+  // 720 宽的全屏档 + 16 边距落进 700 的窗口：右锚点会把左缘顶到 -36
+  const out = clamp({ width: FULL, height: 480, right: 16, top: 28 }, 700, 600)
+  assert.equal(out.left, 0, '左缘不能为负')
+  assert.equal(out.right, undefined, '既要 left 就不能同时留 right，否则左缘仍按右缘算')
+
+  // 窗口够宽时仍然走右锚点（跟随右侧栏，窗口拉宽后不会被钉死在左边）
+  const docked = clamp({ width: FULL, height: 480, right: 16, top: 28 }, 1080, 600)
+  assert.equal(docked.right, 16)
+  assert.equal(docked.left, undefined)
+})

@@ -188,6 +188,9 @@ window.__ModuleLoader__.load({
         padding: 10px 8px 10px 12px;
         cursor: grab;
         user-select: none;
+        /* 触屏 / 触控笔上必须声明：否则浏览器会把「按住标题栏拖动」当成滚动手势，
+           拖到一半发 pointercancel，面板完全拖不动（安卓 WebView、触屏 Windows 都会）。 */
+        touch-action: none;
         flex-shrink: 0;
         border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.05));
       }
@@ -973,17 +976,38 @@ window.__ModuleLoader__.load({
 		const PREVIEW_VIEWPORT_MARGIN = 8;
 
 		/**
+		 * 预览浮层该落在悬停行的哪一侧：右侧放得下就放右侧，放不下才翻到左边。
+		 * 判据是「行的右缘 + 间距 + 浮层宽」是否还在视口内，而不是「行在不在窗口右半边」——
+		 * 后者在窄窗口里会误判（行还靠左，浮层已经放不下）。
+		 */
+		function previewSideFor(rectLeft, rectRight, viewportWidth) {
+			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
+			if (vw === 0) return "right";
+			const l = typeof rectLeft === "number" && Number.isFinite(rectLeft) ? rectLeft : 0;
+			const r = typeof rectRight === "number" && Number.isFinite(rectRight) ? rectRight : l;
+			if (r + PREVIEW_GAP + PREVIEW_MAX_WIDTH <= vw) return "right";
+			const fitsLeft = l - PREVIEW_GAP - PREVIEW_MAX_WIDTH >= PREVIEW_VIEWPORT_MARGIN;
+			return fitsLeft ? "left" : "right";
+		}
+
+		/**
 		 * 预览浮层的落点：hover 事件拿到的是**视口坐标**，所以这里也按视口算。
 		 * 右边或下边放不下就往回夹，而不是直接算成负数 —— 窄窗口（手机 WebView、
 		 * 半屏窗口）上原来的 `innerWidth - 380` 会给出负值，浮层跑到视口左侧外面。
+		 *
+		 * side = "left" 表示浮层在行的左侧（由 previewSideFor 决定）：此时 x 是行的**左缘**，
+		 * 需要再往左让出浮层宽 + 间距。旧实现把「让出宽度」写在进行里、这里又加一次间距，
+		 * 结果翻到左侧时浮层反压住行首 10px。
 		 * 视口未知（单测 / 非浏览器）时保持原始偏移，不做猜测。
 		 */
-		function previewPlacement(x, y, viewportWidth, viewportHeight) {
+		function previewPlacement(x, y, viewportWidth, viewportHeight, side) {
 			const anchorX = typeof x === "number" && Number.isFinite(x) ? x : 0;
 			const anchorY = typeof y === "number" && Number.isFinite(y) ? y : 0;
 			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
 			const vh = typeof viewportHeight === "number" && viewportHeight > 0 ? viewportHeight : 0;
-			let left = anchorX + PREVIEW_GAP;
+			let left = side === "left"
+				? anchorX - PREVIEW_MAX_WIDTH - PREVIEW_GAP
+				: anchorX + PREVIEW_GAP;
 			let top = anchorY + PREVIEW_GAP;
 			if (vw > 0) {
 				const maxLeft = vw - PREVIEW_MAX_WIDTH - PREVIEW_VIEWPORT_MARGIN;
@@ -1001,21 +1025,31 @@ window.__ModuleLoader__.load({
 		 * 面板会整块落在视口右侧之外 —— 表现为「点了大纲按钮，什么都不出来」，而窗口最大化后
 		 * 又正常。这里只在渲染时钳制，不回写 localStorage：把窗口拉回去时位置还是原来的。
 		 *
-		 * 停靠态返回的是 right 锚点（没有 left），天然贴边，不需要处理。
+		 * 停靠态用 right 锚点（没有 left）：正常情况下天然贴边，不需要处理；但窗口比
+		 * 「面板宽 + 边距」还窄时（全屏档 720 落在 700 宽的窗口里），右锚点会把左缘顶到
+		 * 负坐标，面板整块从左边溢出去。此时折算成 left: 0 —— 贴住左缘、右侧被裁，
+		 * 至少标题栏和列表首列还看得见。
 		 * top 只要求露出标题栏（MIN_PANEL_VISIBLE_HEIGHT），够把它拖回来就行。
 		 */
 		const MIN_PANEL_VISIBLE_HEIGHT = 80;
 		function clampPlacementToViewport(placement, viewportWidth, viewportHeight) {
-			if (typeof placement.left !== "number") return placement;
 			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
 			if (vw === 0) return placement;
-			const maxLeft = Math.max(0, vw - placement.width);
-			const left = Math.min(maxLeft, Math.max(0, placement.left));
+			let out = placement;
+			if (typeof out.left !== "number" && typeof out.right === "number" && typeof out.width === "number") {
+				if (vw - out.right - out.width < 0) {
+					out = Object.assign({}, out, { left: 0 });
+					delete out.right;
+				}
+			}
+			if (typeof out.left !== "number") return out;
+			const maxLeft = Math.max(0, vw - out.width);
+			const left = Math.min(maxLeft, Math.max(0, out.left));
 			const vh = typeof viewportHeight === "number" && viewportHeight > 0 ? viewportHeight : 0;
-			const top = typeof placement.top !== "number"
-				? placement.top
-				: (vh === 0 ? placement.top : Math.min(Math.max(0, vh - MIN_PANEL_VISIBLE_HEIGHT), Math.max(0, placement.top)));
-			return Object.assign({}, placement, { left, top });
+			const top = typeof out.top !== "number"
+				? out.top
+				: (vh === 0 ? out.top : Math.min(Math.max(0, vh - MIN_PANEL_VISIBLE_HEIGHT), Math.max(0, out.top)));
+			return Object.assign({}, out, { left, top });
 		}
 
 		/**
@@ -2551,11 +2585,14 @@ window.__ModuleLoader__.load({
 				onMouseEnter: (e) => {
 					if (props.previewSetter === undefined) return;
 					const rect = e.currentTarget.getBoundingClientRect();
-					const placeLeft = rect.left > window.innerWidth / 2;
+					const side = previewSideFor(rect.left, rect.right, window.innerWidth);
 					props.previewSetter({
 						node,
-						x: placeLeft ? Math.max(10, rect.left - 350) : rect.right + 8,
+						// 只给「行的哪一条边」，间距统一由 previewPlacement 加 —— 两边各加
+						// 一次会让浮层翻到左侧时反压住行首。
+						x: side === "left" ? rect.left : rect.right,
 						y: rect.top,
+						side,
 					});
 				},
 				onMouseLeave: () => {
@@ -3233,33 +3270,59 @@ window.__ModuleLoader__.load({
 
 			// 标题栏拖拽（4px 移动阈值：没有阈值时标题栏按钮的 pointerup 会误判成拖动）
 			const panelRef = useRef(null);
+			/* 拖拽期间挂在 window 上的监听必须能被外部收掉：触屏手势被浏览器接管时
+			   只发 pointercancel、不发 pointerup，旧实现会把 pointermove 永久留在
+			   window 上 —— 之后鼠标随便动一下，面板就跟着跑（而且每次取消再叠一份）。 */
+			const dragCleanupRef = useRef(null);
+			useEffect(() => () => {
+				if (dragCleanupRef.current !== null) dragCleanupRef.current();
+			}, []);
 			const onDragStart = useCallback((e) => {
 				if (e.button !== 0) return;
 				const panel = panelRef.current;
 				if (panel === null) return;
 				const rect = panel.getBoundingClientRect();
+				// 拖拽时是直接改内联样式的，取消 / 中断要还原成 React 上一轮写的那份
+				const initial = { left: panel.style.left, top: panel.style.top, right: panel.style.right };
 				const dx = e.clientX - rect.left;
 				const dy = e.clientY - rect.top;
 				const startX = e.clientX;
 				const startY = e.clientY;
 				let moved = false;
 				const clampX = (x) => Math.max(0, Math.min(window.innerWidth - rect.width, x));
-				const clampY = (y) => Math.max(0, Math.min(window.innerHeight - 80, y));
-				const onMove = (ev) => {
+				const clampY = (y) => Math.max(0, Math.min(window.innerHeight - MIN_PANEL_VISIBLE_HEIGHT, y));
+				function onMove(ev) {
 					if (moved === false && Math.abs(ev.clientX - startX) < 4 && Math.abs(ev.clientY - startY) < 4) return;
 					moved = true;
 					panel.style.left = clampX(ev.clientX - dx) + "px";
 					panel.style.top = clampY(ev.clientY - dy) + "px";
 					panel.style.right = "auto";
-				};
-				const onUp = (ev) => {
+				}
+				function cleanup() {
 					window.removeEventListener("pointermove", onMove);
 					window.removeEventListener("pointerup", onUp);
+					window.removeEventListener("pointercancel", onCancel);
+					dragCleanupRef.current = null;
+				}
+				function onUp(ev) {
+					cleanup();
 					if (moved === false) return;
 					store.set({ left: clampX(ev.clientX - dx), top: clampY(ev.clientY - dy) });
-				};
+				}
+				/* 浏览器接管手势（触屏滚动、系统手势）：放弃这次拖拽，位置回滚到拖拽前，
+				   不写 localStorage —— 半途的位置是用户的意外，不该被持久化。 */
+				function onCancel() {
+					cleanup();
+					if (moved === false) return;
+					panel.style.left = initial.left;
+					panel.style.top = initial.top;
+					panel.style.right = initial.right;
+				}
+				if (dragCleanupRef.current !== null) dragCleanupRef.current();
 				window.addEventListener("pointermove", onMove);
 				window.addEventListener("pointerup", onUp);
+				window.addEventListener("pointercancel", onCancel);
+				dragCleanupRef.current = cleanup;
 			}, [store]);
 
 			const onItemClick = (node) => {
@@ -3617,6 +3680,7 @@ window.__ModuleLoader__.load({
 								previewNode.y,
 								currentViewport().width,
 								currentViewport().height,
+								previewNode.side,
 							),
 						},
 						h("span", { className: "dsh-conv-preview-label" },
@@ -3887,6 +3951,7 @@ window.__ModuleLoader__.load({
 			panelSurfaceStyle,
 			clampPlacementToViewport,
 			previewPlacement,
+			previewSideFor,
 			resolveResizedLeft,
 			resolveSlotChannel,
 			HistoryOutlinePanelInner,

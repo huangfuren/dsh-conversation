@@ -168,3 +168,28 @@ test('中英文案都不再叫「面板透明度」（会让人以为在调模�
   assert.doesNotMatch(SRC, /"appearance\.opacity":\s*"面板透明度"/)
   assert.doesNotMatch(SRC, /"appearance\.opacity":\s*"Panel opacity"/)
 })
+
+test('翻到左侧时与行之间保持间距，不压住行首', () => {
+  // 行左缘 600：浮层应贴在 600 - 340 - 20 = 240，右缘 580，与行留 20px
+  const spot = internals.previewPlacement(600, 300, 1440, 800, 'left')
+  assert.equal(spot.left, 240)
+  assert.equal(spot.left + 340, 580, '浮层右缘必须留在行左缘之外')
+})
+
+test('该往哪一侧弹：右侧放得下就右侧，放不下才翻左', () => {
+  const side = internals.previewSideFor
+  assert.equal(side(200, 500, 1440), 'right', '右侧空间充足')
+  assert.equal(side(1040, 1240, 1440), 'left', '右侧放不下 340px，翻到左边')
+  assert.equal(side(20, 200, 360), 'right', '两边都不够时仍走右侧，交给 previewPlacement 夹回')
+  assert.equal(side(200, 500, 0), 'right', '视口未知时不翻')
+})
+
+test('标题栏声明 touch-action: none（否则触屏拖不动面板）', () => {
+  assert.match(cssRule('.dsh-conv-header'), /touch-action:\s*none/)
+})
+
+test('拖拽要收拾 pointercancel（触屏手势被接管时不能留监听）', () => {
+  assert.match(SRC, /addEventListener\("pointercancel", onCancel\)/)
+  assert.match(SRC, /removeEventListener\("pointercancel", onCancel\)/)
+  assert.match(SRC, /panel\.style\.left = initial\.left/, '取消时要还原拖拽前的位置')
+})

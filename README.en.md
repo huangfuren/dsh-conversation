@@ -19,15 +19,18 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
   - Level slider: 0 = questions only, 1–6 = open down to that heading level; dot tooltips show per-level counts.
   - **Background opacity**: a slider at the bottom of the panel adjusts the **panel background** between 40% and 100% (default 100%, i.e. the old look). Only the background is dimmed — text stays fully opaque — and the **backdrop blur is derived from it in reverse**: the more transparent, the more the text behind shows through and the larger the blur radius (about 3.6px at 40%, 0 at 100%). That is by design, not a rendering fault. Click the percentage to go back to fully opaque, or double-click the slider. Useful when the panel covers the content you are reading.
   - Rows: collapse arrow, `Q1` badge, text, time, **this turn's "N tools / N chars" stats**, bookmark star; the row at the current reading position is softly highlighted and scrolled into view.
-  - Footer: top / bottom, plus the **side-rail toggle**.
-- **Collapsed** — defaults to the **right-edge rail** (`dsh-conv-rail`): one tick per question, length normalised by that turn's text volume (effectively a conversation density map); hover shows a summary, click jumps to the turn, the icon at the top re-opens the panel. Turning the rail off falls back to the corner capsule (`dsh-conv-fab`) "History · Outline (N)".
+  - Footer: top / bottom.
+- **Collapsed** — the only entry point is the "Outline" button in the session title bar (`order: 100`, next to
+  the native buttons). Since 1.3.1 the former right-edge rail (`dsh-conv-rail`) and the corner capsule
+  (`dsh-conv-fab`) are **disabled**: they duplicated the header button, and the rail overlapped plugins that
+  ship their own navigation rail. Both components and their styles are still in the repo, just not mounted.
 - **Jump granularity** — single click jumps to the node; **double click jumps to the end of that section** (next node at the same or higher level, or the very bottom).
 - **Keyboard** — with the panel focused, `Alt+↓` / `Alt+↑` move to the next / previous node; the listener is scoped to the panel and never steals host shortcuts.
 - **Reading position memory** — each session remembers the outline node you last looked at, and the panel lands there when you come back.
 - **Empty state** — "No outline content yet" until the session has questions or headings.
 - **First-paint placeholder** — after a reload, while the host's session / chat data is not ready yet, the panel position shows "Reading conversation…" and the panel mounts once the host session binding is ready (if the binding arrives before the chat snapshot, the panel may render the empty state once and fill in on the next snapshot update) (no more empty-state flash). If the host still has no session binding after 2 seconds, the panel mounts anyway and shows the empty state.
 - **Adaptive header button (icon-only)** — when the right sidebar opens and the header narrows, the "Outline" button collapses to the bare icon via the **same mechanism as the native buttons**: the same container query (`@container (width<=540px)`) against the same `.wSkVaW_titleRow` container. The button really shrinks to icon width; `aria-label` / `title` stay, click and keyboard focus keep working; it restores when the space comes back. On older hosts without the container it degrades to the full-width button (safe).
-- Persisted state: `pinned` / drag position / view tier / rail toggle / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix.
+- Persisted state: `pinned` / drag position / view tier / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix. The rail-toggle field disabled in 1.3.1 is still read in, so old state migrates cleanly.
 
 ## How it works
 
@@ -135,8 +138,7 @@ the snapshot-shape matrix, and the "at most one line per page load" rule for bot
   supplied through props, if the host ever adds one, takes precedence for bookmarks/reading position and the
   `loadOlder` target; the outline itself still follows the main-view binding.
 - The panel is `fixed`-positioned, so it can overlap other top-right floating plugins — they have to offset
-  their `top`. The rail hugs the right edge centred, so it will visually collide with a similar navigation
-  plugin if both are enabled.
+  their `top`.
 - The "N tools / N chars" figures count tool nodes after that turn in the snapshot and the character count of
   assistant prose; if the host renames node kinds they degrade to not displayed (never throw).
 - The export filename is fixed at `dsh-conversation-outline.md`; there is no naming option.
