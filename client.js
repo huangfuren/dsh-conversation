@@ -1484,6 +1484,11 @@ window.__ModuleLoader__.load({
 				this.onExpandLevelChange = opts.onExpandLevelChange;
 				this.onBookmarksChange = opts.onBookmarksChange;
 				this.listeners = new Set();
+				/* getState() 快照缓存：同一次变更周期内必须返回同一对象引用。
+				   渲染期裸调 getState()（面板组件每轮渲染都取一次 state），若每次调用
+				   都新造对象 + 现算 flattenVisible，依赖 state 的 effect 就会每轮渲染
+				   拆了重挂 —— issue #4 重开的「预览闪 ~45ms」回归正是踩在这个结构上。 */
+				this._snapshot = null;
 			}
 
 			subscribe(fn) {
@@ -1492,6 +1497,7 @@ window.__ModuleLoader__.load({
 			}
 
 			notify() {
+				this._snapshot = null;
 				for (const fn of this.listeners) fn();
 			}
 
@@ -1545,7 +1551,8 @@ window.__ModuleLoader__.load({
 			}
 
 			getState() {
-				return {
+				if (this._snapshot !== null) return this._snapshot;
+				this._snapshot = {
 					tree: this.tree,
 					visible: flattenVisible(this.tree, {
 						expandLevel: this.expandLevel,
@@ -1561,6 +1568,7 @@ window.__ModuleLoader__.load({
 					bookmarkMode: this.bookmarkMode,
 					bookmarkIds: this.bookmarkIds,
 				};
+				return this._snapshot;
 			}
 
 			setLevel(level) {
@@ -1587,6 +1595,9 @@ window.__ModuleLoader__.load({
 			}
 
 			revealNode(index) {
+				/* revealPath 落空时 clearForceVisible 也动过树标记，而这条路不会
+				   notify —— 缓存必须就地失效，否则下一次无关重渲染会读回旧快照。 */
+				this._snapshot = null;
 				clearForceVisible(this.tree, this.expandLevel);
 				if (revealPath(this.tree, index)) this.notify();
 			}
@@ -1612,6 +1623,8 @@ window.__ModuleLoader__.load({
 			}
 
 			performSearch(query) {
+				/* 只改树标记与 matchCount，notify 由调用方负责；缓存先失效兜底。 */
+				this._snapshot = null;
 				const needle = query.toLowerCase();
 				const scope = this.searchScope;
 				let count = 0;
@@ -3238,9 +3251,13 @@ window.__ModuleLoader__.load({
 			const tree = state !== undefined && Array.isArray(state.tree) ? state.tree : EMPTY_NODES;
 			const visible = state !== undefined && Array.isArray(state.visible) ? state.visible : EMPTY_NODES;
 
-			// 阅读位置跟随（捕获阶段监听会话根 + rAF 节流）
+			// 阅读位置跟随（捕获阶段监听会话根 + rAF 节流）。state 来自 OutlineManager
+			// 的快照缓存，身份只在真实数据变更（notify）时变化：effect 只在数据/会话
+			// 变化时重跑，hover 之类的本地重渲染不会进来，闭包里的 tree/visible 也
+			// 因此与 state 保持一致。
 			const activeIdRef = useRef(null);
 			const listRef = useRef(null);
+			const lastScrollTopRef = useRef(null);
 			const [, bumpActive] = useReducer((x) => x + 1, 0);
 			useEffect(() => {
 				if (state === undefined) return undefined;
@@ -3266,23 +3283,40 @@ window.__ModuleLoader__.load({
 					if (row instanceof HTMLElement) ensureElementInView(row, list);
 				};
 				let raf = 0;
+				/* 阅读位置同步：从正文当前滚动位置算出「正在看哪一条」，需要时写库并让
+				   面板跟随。effect 重跑时的立即调用只走这份，绝不碰预览 —— v1.5.4 曾把
+				   清预览放在这条路径上，任何本地重渲染（hover 自己、搜索输入、透明度
+				   拖动）都会在下一帧把刚出现的预览清掉（issue #4 重开的 ~45ms 回归）。 */
+				const syncActive = () => {
+					let id = null;
+					try {
+						id = resolveVisibleActiveId(computeActiveItemId(root, flat), tree, visible);
+					} catch (e) { /* 阅读位置跟随是 best-effort */ }
+					if (id !== activeIdRef.current) {
+						activeIdRef.current = id;
+						if (currentId !== undefined && id !== null) savePos(currentId, id);
+						bumpActive();
+						followActive(id);
+					}
+				};
 				const onScroll = () => {
 					if (raf !== 0) return;
 					raf = window.requestAnimationFrame(() => {
 						raf = 0;
-						/* 正文一滚，浮层锚定的那一行已经不在鼠标下了，但浏览器不会为
-						   「元素自己滑走」补发 mouseleave —— 不清掉就会留一块悬在旧位置的预览。 */
-						setPreviewNode(null);
-						let id = null;
+						/* 正文真滚动了，浮层锚定的那一行已经不在鼠标下了，但浏览器不会为
+						   「元素自己滑走」补发 mouseleave —— 不清掉就会留一块悬在旧位置的预览。
+						   但「收到 scroll 事件」不等于「真滚动了」，必须比对 scrollTop：
+						   窗口变化、其他代码触发的合成 scroll 都可能位置没动，此时不该清。 */
 						try {
-							id = resolveVisibleActiveId(computeActiveItemId(root, flat), tree, visible);
-						} catch (e) { /* 阅读位置跟随是 best-effort */ }
-						if (id !== activeIdRef.current) {
-							activeIdRef.current = id;
-							if (currentId !== undefined && id !== null) savePos(currentId, id);
-							bumpActive();
-							followActive(id);
-						}
+							const container = findChatScrollContainer(root);
+							const top = container === null ? null : container.scrollTop;
+							if (top !== null && lastScrollTopRef.current !== null
+								&& top !== lastScrollTopRef.current) {
+								setPreviewNode(null);
+							}
+							if (top !== null) lastScrollTopRef.current = top;
+						} catch (e) { /* 滚动清预览是 best-effort，别打断阅读位置同步 */ }
+						syncActive();
 					});
 				};
 				// 阅读位置恢复：切回某个会话时，面板列表直接落在上次看到的那个节点上
@@ -3292,8 +3326,14 @@ window.__ModuleLoader__.load({
 					activeIdRef.current = savedPos;
 					window.setTimeout(() => followActive(savedPos), 0);
 				}
+				// scrollTop 基线：effect 每次重跑（含换会话）都重读，保证第一条 scroll
+				// 事件就有可比基准 —— 否则「hover 后的首个滚动」会漏清一次预览。
+				try {
+					const bootContainer = findChatScrollContainer(root);
+					lastScrollTopRef.current = bootContainer === null ? null : bootContainer.scrollTop;
+				} catch (e) { /* 基线读不到就靠下一条 scroll 事件自建 */ }
 				root.addEventListener("scroll", onScroll, { capture: true, passive: true });
-				onScroll();
+				syncActive();
 				return () => {
 					root.removeEventListener("scroll", onScroll, { capture: true });
 					if (raf !== 0) window.cancelAnimationFrame(raf);
@@ -4009,6 +4049,7 @@ window.__ModuleLoader__.load({
 			snapshotSourceOf,
 			safeNodesOf,
 			makeSessionBindingSelector,
+			OutlineManager,
 		});
 		return module.exports;
 	}

@@ -114,7 +114,7 @@ test('loader contract: id, exports and declared services', () => {
 
 test('internals export list covers helpers, components and test seams', () => {
   assert.deepEqual(Object.keys(api.internals).sort(), [
-      'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'buildOutlineItems',
+      'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'OutlineManager', 'buildOutlineItems',
       'clampPlacementToViewport', 'conversationNodesOf', 'createHostBridge', 'mainSessionIdOf',
       'makeSessionBindingSelector',
       'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'previewPlacement', 'previewSideFor', 'probeDomContract', 'readHostService',
