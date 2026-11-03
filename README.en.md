@@ -4,14 +4,19 @@ English | [中文](./README.md)
 
 A conversation outline panel for the DSH web surface: it turns the current session into a navigable tree — **user questions** are the root nodes (index, time, per-turn tool count and text volume), and the **Markdown headings of the assistant replies** hang under the question they belong to. Clicking any row jumps to the message and flashes it briefly. Pure UI: it never touches prompts, messages, tool results, and makes no provider requests.
 
-> Project status: 1.x. Verified on **dsh 0.1.5-rc.2** with the `web` profile. Older dsh versions and other profiles are **not certified** — the plugin degrades to "panel absent" rather than throwing, but that path is not part of the tested matrix.
+> Project status: 1.x. Verified on **dsh 0.1.5-rc.2** with the `web` profile, and adapted to **dsh 0.2.x** (`>=0.2.0-rc.1 <1.0.0`). Older dsh versions and other profiles are **not certified** — the plugin degrades to "panel absent" rather than throwing, but that path is not part of the tested matrix.
 
-Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed the package from `dsh-client-hqst`; 1.2.0 added the bulk of the navigation surface (three width tiers, side rail, search scope, export, section jump, keyboard shortcuts, reading-position memory).
+Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed the package from `dsh-client-hqst`; 1.2.0 added the bulk of the navigation surface (three width tiers, side rail, search scope, export, section jump, keyboard shortcuts, reading-position memory). The side rail was disabled in 1.3.1, and 1.5.5 comments its code out in place with a per-block rationale (no behaviour change).
 
 ## What it looks like
 
 - **Pinned (default)** — a floating panel (`dsh-conv-panel`) titled "History · Outline".
   - **Three width tiers**: compact 320px → wide 480px → full 720px full-height, cycled from the title bar.
+    A tier grows **away from whichever edge the panel is anchored to** — flush left grows right, flush right
+    grows left, dragged into the middle grows symmetrically; when one side lacks the room, the entire shortfall
+    goes to the other side. The wall-side edge never moves, so widening never pushes the panel out of the window
+    and shrinking returns it to its previous position (a margin ≤ 32px counts as flush, which covers the
+    default 16px dock offset).
   - **Left/right docking**: the title-bar dock button switches between docking to the left and to the right, resetting to the default position.
   - The title bar doubles as the drag handle (4px threshold, position persisted).
   - Tool row: expand/collapse all, bookmarks-only, **copy outline** (Markdown to clipboard), **export as .md**, search box with highlighted hits.
@@ -23,14 +28,17 @@ Version history: 1.1.0 merged the whole former `dsh-outline` plugin and renamed 
 - **Collapsed** — the only entry point is the "Outline" button in the session title bar (`order: 100`, next to
   the native buttons). Since 1.3.1 the former right-edge rail (`dsh-conv-rail`) and the corner capsule
   (`dsh-conv-fab`) are **disabled**: they duplicated the header button, and the rail overlapped plugins that
-  ship their own navigation rail. Both components and their styles are still in the repo, just not mounted.
+  ship their own navigation rail. Since 1.5.5 that dead code is **commented out in place** — every block states
+  why it is dead (which commit removed the mount point), why it is kept, how to restore it and the retirement
+  date; search the marker `停用保留` ("retired, kept") in `client.js` to find them. Nothing is deleted and none
+  of it is built, so restoring the feature means removing the comment markers.
 - **Jump granularity** — single click jumps to the node; **double click jumps to the end of that section** (next node at the same or higher level, or the very bottom).
 - **Keyboard** — with the panel focused, `Alt+↓` / `Alt+↑` move to the next / previous node; the listener is scoped to the panel and never steals host shortcuts.
 - **Reading position memory** — each session remembers the outline node you last looked at, and the panel lands there when you come back.
 - **Empty state** — "No outline content yet" until the session has questions or headings.
-- **First-paint placeholder** — after a reload, while the host's session / chat data is not ready yet, the panel position shows "Reading conversation…" and the panel mounts once the host session binding is ready (if the binding arrives before the chat snapshot, the panel may render the empty state once and fill in on the next snapshot update) (no more empty-state flash). If the host still has no session binding after 2 seconds, the panel mounts anyway and shows the empty state.
+- **First-paint placeholder** — after a reload, while the host's session / chat data is not ready yet, the panel position shows "Reading conversation…" and the panel mounts once the host session binding is ready (if the binding arrives before the chat snapshot, the panel may render the empty state once and fill in on the next snapshot update). If the host still has no session binding after 2 seconds, the panel mounts anyway and shows the empty state.
 - **Adaptive header button (icon-only)** — when the right sidebar opens and the header narrows, the "Outline" button collapses to the bare icon via the **same mechanism as the native buttons**: the same container query (`@container (width<=540px)`) against the same `.wSkVaW_titleRow` container. The button really shrinks to icon width; `aria-label` / `title` stay, click and keyboard focus keep working; it restores when the space comes back. On older hosts without the container it degrades to the full-width button (safe).
-- Persisted state: `pinned` / drag position / view tier / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix. The rail-toggle field disabled in 1.3.1 is still read in, so old state migrates cleanly.
+- Persisted state: `pinned` / drag position / view tier / panel background opacity / default level / per-session bookmarks / per-session reading position — all in `localStorage` under the `dsh-conversation:` prefix. The rail-toggle field disabled in 1.3.1 is **no longer read** as of 1.5.5 (its normalisation is commented out); the key stays in `localStorage` and is simply ignored, and restoring that code brings the old value back.
 
 ## How it works
 
@@ -82,7 +90,7 @@ Anything outside this table is unverified.
 An immutable tag is preferred:
 
 ```sh
-dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.5.0
+dsh plugin --profile web add github:huangfuren/dsh-conversation#v1.5.5
 ```
 
 Tracking the development branch (need a commit that is not released yet? use this):
