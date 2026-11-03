@@ -149,12 +149,11 @@ window.__ModuleLoader__.load({
         flex-direction: column;
         height: min(75vh, calc(100vh - 100px));
         pointer-events: auto;
-        background: var(--dsw-alias-bg-layer-1, #fff);
-        /* 透明度用 color-mix 掺在底色上，而不是给整块加 opacity——后者会把正文一起淡掉。
-           color-mix 不被支持时这一行在解析阶段就被丢弃，自动回落到上面那行纯色。 */
-        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
-        -webkit-backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
-        backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
+        /* 底色与模糊都交给 ::before（见下）：backdrop-filter 一旦落在面板本体上，
+           面板就会成为 fixed 后代的包含块，行内预览浮层（.dsh-conv-preview 是
+           position: fixed）会改按面板原点定位，再被这里的 overflow: hidden 裁掉
+           —— 1.4.0 引入模糊后的回归，hover 预览整个看不见。 */
+        background: transparent;
         border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
         border-radius: 12px;
         box-shadow: 0 1px 2px rgba(15, 17, 21, 0.04), 0 8px 28px rgba(15, 17, 21, 0.1);
@@ -164,6 +163,23 @@ window.__ModuleLoader__.load({
         line-height: 1.5;
         overflow: hidden;
         z-index: 1000;
+      }
+      /* 面板的「玻璃」层：背景色 + 背景模糊都画在这里。
+         伪元素不参与面板的包含块判定，所以面板内 position: fixed 的预览浮层
+         仍然相对视口定位（也不会被 overflow: hidden 裁剪）。
+         透明度用 color-mix 掺在底色上，而不是给整块加 opacity——后者会把正文一起淡掉；
+         color-mix 不被支持时这一行在解析阶段就被丢弃，自动回落到上面那行纯色。 */
+      .dsh-conv-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: var(--dsw-alias-bg-layer-1, #fff);
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #fff) var(--dsh-conv-bg-alpha, 100%), transparent);
+        -webkit-backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
+        backdrop-filter: blur(var(--dsh-conv-bg-blur, 0px));
+        pointer-events: none;
+        z-index: -1;
       }
       .dsh-conv-header {
         display: flex;
@@ -950,6 +966,36 @@ window.__ModuleLoader__.load({
 			}
 		}
 
+		/* 预览浮层的几何常量，与 .dsh-conv-preview 的 max-width / max-height 保持一致。 */
+		const PREVIEW_GAP = 20;
+		const PREVIEW_MAX_WIDTH = 340;
+		const PREVIEW_MAX_HEIGHT = 240;
+		const PREVIEW_VIEWPORT_MARGIN = 8;
+
+		/**
+		 * 预览浮层的落点：hover 事件拿到的是**视口坐标**，所以这里也按视口算。
+		 * 右边或下边放不下就往回夹，而不是直接算成负数 —— 窄窗口（手机 WebView、
+		 * 半屏窗口）上原来的 `innerWidth - 380` 会给出负值，浮层跑到视口左侧外面。
+		 * 视口未知（单测 / 非浏览器）时保持原始偏移，不做猜测。
+		 */
+		function previewPlacement(x, y, viewportWidth, viewportHeight) {
+			const anchorX = typeof x === "number" && Number.isFinite(x) ? x : 0;
+			const anchorY = typeof y === "number" && Number.isFinite(y) ? y : 0;
+			const vw = typeof viewportWidth === "number" && viewportWidth > 0 ? viewportWidth : 0;
+			const vh = typeof viewportHeight === "number" && viewportHeight > 0 ? viewportHeight : 0;
+			let left = anchorX + PREVIEW_GAP;
+			let top = anchorY + PREVIEW_GAP;
+			if (vw > 0) {
+				const maxLeft = vw - PREVIEW_MAX_WIDTH - PREVIEW_VIEWPORT_MARGIN;
+				left = Math.min(left, Math.max(PREVIEW_VIEWPORT_MARGIN, maxLeft));
+			}
+			if (vh > 0) {
+				const maxTop = vh - PREVIEW_MAX_HEIGHT - PREVIEW_VIEWPORT_MARGIN;
+				top = Math.min(top, Math.max(PREVIEW_VIEWPORT_MARGIN, maxTop));
+			}
+			return { left: Math.round(left), top: Math.round(top) };
+		}
+
 		/**
 		 * 视口兜底：拖拽坐标是按「当时那个窗口」存的，窗口被拉窄（或换了更小的显示器）之后，
 		 * 面板会整块落在视口右侧之外 —— 表现为「点了大纲按钮，什么都不出来」，而窗口最大化后
@@ -1042,9 +1088,9 @@ window.__ModuleLoader__.load({
 			"history.loading": "加载中…",
 			"panel.dockLeft": "靠左停靠",
 			"panel.dockRight": "靠右停靠",
-			"appearance.opacity": "面板透明度",
-			"appearance.opacityTooltip": "拖动调整面板背景透明度；点右侧百分比恢复 100%",
-			"appearance.reset": "恢复完全不透明",
+			"appearance.opacity": "背景不透明度",
+			"appearance.opacityTooltip": "调整面板背景的不透明度（40–100%）；只影响背景，文字始终不透明；数值越低背景越透、背后的模糊越强；点右侧百分比恢复 100%",
+			"appearance.reset": "恢复完全不透明（100%）",
 		};
 		const EN = {
 			"panel.title": "Questions · Outline",
@@ -1088,9 +1134,9 @@ window.__ModuleLoader__.load({
 			"history.loading": "Loading…",
 			"panel.dockLeft": "Dock to left",
 			"panel.dockRight": "Dock to right",
-			"appearance.opacity": "Panel opacity",
-			"appearance.opacityTooltip": "Drag to adjust the panel background opacity; click the percentage to reset to 100%",
-			"appearance.reset": "Reset to fully opaque",
+			"appearance.opacity": "Background opacity",
+			"appearance.opacityTooltip": "Adjusts the panel background opacity (40–100%). Only the background is affected — text stays opaque. Lower values are more transparent and blur the backdrop more. Click the percentage to reset to 100%.",
+			"appearance.reset": "Reset to fully opaque (100%)",
 		};
 
 		function preferredLang() {
@@ -2016,7 +2062,10 @@ window.__ModuleLoader__.load({
 		const POS_PREFIX = "dsh-conversation:pos:";
 
 		/* 面板背景不透明度（百分比）。100 = 完全不透明，也就是旧版本的观感；
-		   下限压到 40：再低正文对比度就崩了，不如不给这一档。 */
+		   下限压到 40：再低正文对比度就崩了，不如不给这一档。
+		   背景模糊半径由它反向派生（见 panelSurfaceStyle）：越透明 → 背后的字越
+		   透得出来，模糊半径也越大。这是设计使然，不是渲染故障 —— UI 文案要把
+		   「它调的是背景不透明度、模糊跟着反向变」讲清楚，别让人误以为自己在调模糊。 */
 		const OPACITY_MIN = 40;
 		const OPACITY_MAX = 100;
 		const OPACITY_STEP = 5;
@@ -3563,7 +3612,12 @@ window.__ModuleLoader__.load({
 				previewNode !== null
 					? h("div", {
 							className: "dsh-conv-preview",
-							style: { left: Math.min(previewNode.x + 20, window.innerWidth - 380), top: previewNode.y + 20 },
+							style: previewPlacement(
+								previewNode.x,
+								previewNode.y,
+								currentViewport().width,
+								currentViewport().height,
+							),
 						},
 						h("span", { className: "dsh-conv-preview-label" },
 							previewNode.node.isUserQuery === true 
@@ -3832,6 +3886,7 @@ window.__ModuleLoader__.load({
 			normalizeOpacity,
 			panelSurfaceStyle,
 			clampPlacementToViewport,
+			previewPlacement,
 			resolveResizedLeft,
 			resolveSlotChannel,
 			HistoryOutlinePanelInner,

@@ -117,7 +117,7 @@ test('internals export list covers helpers, components and test seams', () => {
       'HistoryOutlinePanelInner', 'HistoryOutlinePlaceholder', 'HistoryOutlineSlot', 'buildOutlineItems',
       'clampPlacementToViewport', 'conversationNodesOf', 'createHostBridge', 'mainSessionIdOf',
       'makeSessionBindingSelector',
-      'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'probeDomContract', 'readHostService',
+      'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'previewPlacement', 'probeDomContract', 'readHostService',
       'reportDomContractOnce', 'reportSnapshotShapeOnce', 'resetDiagnostics', 'resolveResizedLeft',
       'resolveSlotChannel',
       'safeNodesOf', 'snapshotRows', 'snapshotShapeOf', 'snapshotSourceOf', 'textBlocks', 'userText',
