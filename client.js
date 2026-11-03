@@ -3241,6 +3241,9 @@ window.__ModuleLoader__.load({
 					if (raf !== 0) return;
 					raf = window.requestAnimationFrame(() => {
 						raf = 0;
+						/* 正文一滚，浮层锚定的那一行已经不在鼠标下了，但浏览器不会为
+						   「元素自己滑走」补发 mouseleave —— 不清掉就会留一块悬在旧位置的预览。 */
+						setPreviewNode(null);
 						let id = null;
 						try {
 							id = resolveVisibleActiveId(computeActiveItemId(root, flat), tree, visible);
