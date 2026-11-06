@@ -4,7 +4,15 @@
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 每条修复写清**之前的行为 vs 现在的行为**，而不是只写结论。
 
-## [Unreleased]
+## [1.5.7] - 2026-11-06
+
+### Changed
+
+- **补 `dsh.compatibility.dshReleases` 声明**：`0.1.7-rc.2` / `0.2.0-rc.2` / `0.2.1-rc.5` /
+  `0.2.2-rc.1`。依据：0.1.7-rc.2 上七插件实测加载；0.2.2-rc.1 的三条客户端断代 API
+  （`EntryTree.write()`→`commit(change)`、`MenuTarget`→`ContextMenuTarget`、
+  `useAnchoredPosition` / `Menu.getAnchorRect` 移除）本仓引用数为 0。该字段供插件市场与
+  兼容性阅读器查看，不参与宿主加载判定 —— 宿主强校验的仍是 `peerDependencies`。
 
 ## [1.5.6] - 2026-11-04
 
