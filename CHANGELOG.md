@@ -4,6 +4,27 @@
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 每条修复写清**之前的行为 vs 现在的行为**，而不是只写结论。
 
+## [1.5.9] - 2026-11-13
+
+### Changed
+
+- **修正 `engines.dsh` 范围，消除与 `compatibility.dshReleases` 的自相矛盾。**
+  之前的行为：`">=0.1.5-rc.2 <1.0.0 || >=0.2.0-rc.1 <1.0.0"`。按 node-semver 的
+  prerelease 规则（prerelease 版本只匹配**同 [major,minor,patch] 元组**且带
+  prerelease 的比较器），`0.1.7-rc.2` / `0.2.1-rc.5` / `0.2.2-rc.1` 三个 rc 版本
+  都**不满足**该范围——而 `compatibility.dshReleases` 却把三者声明为 compatible，
+  两张表互相矛盾。正式版不受影响（`>=0.1.5-rc.2` 对正式版直接生效）。
+  实证旁证：0.1.7-rc.2 上七插件实测加载成功、issue #5 的 Reporter 在
+  0.2.2-rc.1 上跑起 v1.5.7——说明宿主大概率不硬卡 engines 或用了
+  `includePrerelease`，因此这是声明一致性漏洞而非功能阻断。
+  现在的行为：追加三个精确比较器（`|| 0.1.7-rc.2 || 0.2.1-rc.5 || 0.2.2-rc.1`），
+  engines 与 dshReleases 一一对应；后续每声明一个兼容 rc 就同步补一个精确比较器。
+  该字段供插件市场与兼容性阅读器查看，不参与宿主加载判定。
+
+### Docs
+
+- README（中英）：安装示例的不可变 tag 从 `v1.5.8` 升到 `v1.5.9`。
+
 ## [1.5.8] - 2026-11-13
 
 ### Fixed
