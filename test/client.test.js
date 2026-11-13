@@ -85,6 +85,7 @@ function loadClient() {
   const requireStub = (id) => {
     required.push(id)
     if (id === 'react') return React
+    if (id === 'react-dom') return { createPortal: () => null } // issue #5：面板 portal 用
     // 客户端只能依赖宿主提供的外部模块;任何相对路径依赖在真实加载器里会解析失败。
     throw new Error(`client.js must not require "${id}"`)
   }
@@ -109,7 +110,8 @@ test('loader contract: id, exports and declared services', () => {
   assert.equal(typeof api.apply, 'function')
   assert.deepEqual(api.inject, ['slots', 'sessions'], 'host services this panel needs')
   assert.ok(Object.isFrozen(api.internals), 'internals must be frozen')
-  assert.deepEqual(required, ['react'], 'client may only require the host-provided react')
+  assert.deepEqual(required, ['react', 'react-dom'],
+    'client may only require host-provided modules（react-dom 供面板 portal，issue #5；宿主 staticModules 注册表提供）')
 })
 
 test('internals export list covers helpers, components and test seams', () => {
@@ -120,7 +122,7 @@ test('internals export list covers helpers, components and test seams', () => {
       'normalizeOpacity', 'panelMountStateOf', 'panelSurfaceStyle', 'previewPlacement', 'previewSideFor', 'probeDomContract', 'readHostService',
       'reportDomContractOnce', 'reportSnapshotShapeOnce', 'resetDiagnostics', 'resolveResizedLeft',
       'resolveSlotChannel',
-      'safeNodesOf', 'snapshotRows', 'snapshotShapeOf', 'snapshotSourceOf', 'textBlocks', 'userText',
+      'safeNodesOf', 'setPortalApi', 'snapshotRows', 'snapshotShapeOf', 'snapshotSourceOf', 'textBlocks', 'userText', 'withBodyPortal',
     ])
   for (const [name, fn] of Object.entries(api.internals)) assert.equal(typeof fn, 'function', `${name} must be a function`)
 })

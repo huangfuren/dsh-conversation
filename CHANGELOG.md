@@ -4,6 +4,43 @@
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 每条修复写清**之前的行为 vs 现在的行为**，而不是只写结论。
 
+## [1.5.8] - 2026-11-13
+
+### Fixed
+
+- **DSH 0.2.2-rc.1 上大纲面板被钉死在标题栏区域，标题栏以下被会话正文层盖住（issue #5）。**
+  之前的行为：面板作为 `position: fixed` 元素与标题栏按钮一起直接渲染在
+  `conversation.session.header.actions` 槽位里（DOM 链 header > .titleRow >
+  .headerActions > 槽位 > 面板），没有 portal。宿主 0.2.2-rc.1 给会话标题栏
+  `.titleRow` 声明了 `container-type: inline-size`（本插件 1.5.x 的 icon-only
+  收窄正是借的这个容器），按 CSS 规范它隐含 layout containment —— 该元素成为
+  所有 `position: fixed` 后代的包含块，同时建立层叠上下文。于是 fixed 定位从
+  「相对视口」退化为「相对标题栏」，`z-index: 1000` 只在标题栏层内生效，
+  面板被钉在标题栏区域内，标题栏以下的部分被排在后面的会话正文层整个盖住。
+  现在的行为：面板与首屏占位经 `createPortal(…, document.body)` 渲染到 body，
+  脱离标题栏的包含块与层叠上下文，fixed 重新相对视口定位；标题栏按钮**仍留在
+  槽位内**——它是标题栏的一部分，且其 icon-only 收窄依赖 `.titleRow` 容器查询。
+  可行性依据：宿主 boot 的 staticModules 注册表提供 `"react-dom"`（0.1.x bundle
+  实测：`{"react", "react/jsx-runtime", "react-dom", "react-dom/client", …}`，
+  React 18.3.1）。降级：宿主 `require("react-dom")` 抛错、`createPortal` 缺失、
+  `document.body` 缺失或 portal 抛错时，`withBodyPortal` 原样返回元素——面板回到
+  槽位内渲染，行为与 1.5.7 完全一致（旧宿主上这就是正确位置）。
+  面板 CSS 零改动（仍 `position: fixed` + `z-index: 1000`，预览浮层仍 fixed）。
+  新增 `test/portal.test.js` 12 例：portal 结构（容器 = body、按钮留槽位、
+  面板/占位同点出槽）+ 降级路径（无 react-dom / body 缺失 / createPortal 抛错）
+  + CSS 结构回归（fixed 保持）。
+
+### Changed
+
+- **依赖面扩大到宿主提供的 `react-dom`**（仅 `createPortal`，无其它用法）。
+  `test/client.test.js` 的 loader contract 同步：require 白名单从 `['react']`
+  扩为 `['react', 'react-dom']`；internals 导出清单加 `setPortalApi` /
+  `withBodyPortal` 两个测试接缝。
+
+### Docs
+
+- README（中英）：安装示例的不可变 tag 从 `v1.5.7` 升到 `v1.5.8`。
+
 ## [1.5.7] - 2026-11-06
 
 ### Changed

@@ -47,6 +47,41 @@ window.__ModuleLoader__.load({
 		/* 诊断开关：先只渲染按钮、暂不渲染展开面板，用来判断异常是否来自面板 */
 		const DIAG_NO_PANEL = false;
 
+		/* Portal 能力（issue #5 修复，2026-11-13）：
+		   宿主 0.2.2-rc.1 给会话标题栏 .titleRow 声明了 container-type: inline-size。
+		   按 CSS 规范它隐含 layout containment —— 该元素成为所有 position: fixed
+		   后代的包含块，同时建立层叠上下文。面板此前直接渲染在
+		   conversation.session.header.actions 槽位里（DOM 链 header > .titleRow >
+		   .headerActions > 槽位 > 面板），fixed 定位从「相对视口」退化为「相对标题栏」，
+		   面板被钉死在标题栏区域内，z-index: 1000 也只在标题栏层内生效，
+		   标题栏以下的部分被排在后面的会话正文层整个盖住（issue #5 截图现象）。
+		   修复：面板与首屏占位 portal 到 document.body，标题栏按钮仍留在槽位。
+		   可行性依据：宿主 boot 的 staticModules 注册表提供 "react-dom"
+		   （0.1.x bundle 实测：{"react", "react/jsx-runtime", "react-dom",
+		   "react-dom/client", "@deepseek-ai/cordis", ...}）。
+		   降级：宿主未注入 react-dom 或 createPortal 缺失 → PORTAL 保持 null，
+		   元素原样返回（留在槽位内）—— 旧宿主上这是正确位置，行为与 1.5.7 一致。 */
+		let PORTAL = null;
+		function setPortalApi(api) {
+			PORTAL = (api !== null && api !== undefined && typeof api === "object" && typeof api.createPortal === "function")
+				? api : null;
+		}
+		try {
+			setPortalApi(require("react-dom"));
+		} catch (e) { /* 宿主不提供 react-dom → 原位渲染降级 */ }
+
+		/* 把浮层元素（面板 / 首屏占位）挂到 document.body。portal 失败时原样返回，
+		   绝不让面板因为 portal 本身报错而消失。 */
+		function withBodyPortal(element, key) {
+			if (PORTAL === null || element === null || element === undefined) return element;
+			try {
+				if (!document || !document.body) return element;
+				return PORTAL.createPortal(element, document.body, key);
+			} catch (e) {
+				return element;
+			}
+		}
+
 		/* 诊断：渲染阶段标记。边界捕获异常时读取最后一次到达的位置，直接定位崩点 */
 		function stg(name) { try { window.__dshStage = name; } catch (e) {} }
 
@@ -3884,6 +3919,16 @@ window.__ModuleLoader__.load({
 			   提前 return 会让 hook 数量变化（Rules of Hooks 崩溃）。 */
 			if (!hasStore) return null;
 
+			/* 面板与首屏占位 portal 到 document.body（issue #5）：新宿主的 .titleRow
+			   是 CSS 容器（container-type: inline-size → layout containment），
+			   fixed 后代在槽位内会被钉在标题栏区域并被正文层盖住。
+			   按钮必须留在槽位 —— 它是标题栏的一部分，且依赖 .titleRow 容器查询收窄。
+			   宿主缺 react-dom 时 withBodyPortal 原样返回，回退槽位内渲染（旧行为）。 */
+			const panelElement = mountPanel
+				? h(PanelBoundary, { key: hookShape },
+					h(HistoryOutlinePanelInner, Object.assign({}, safeProps, { key: "conv-panel" })))
+				: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide, chrome });
+
 			return h(Fragment, null, [
 				h("button", {
 					key: "conv-header-btn",
@@ -3896,10 +3941,7 @@ window.__ModuleLoader__.load({
 				}, h(OutlineGlyph), h("span", { className: "dsh-conv-header-btn-text", style: { marginLeft: 4 } }, t("panel.title"))),
 
 				pinned && !DIAG_NO_PANEL
-					? (mountPanel
-						? h(PanelBoundary, { key: hookShape },
-							h(HistoryOutlinePanelInner, Object.assign({}, safeProps, { key: "conv-panel" })))
-						: h(HistoryOutlinePlaceholder, { key: "conv-pending", t: safeProps.t, side: dockSide, chrome }))
+					? withBodyPortal(panelElement, "conv-panel-portal")
 					: null,
 			]);
 		}
@@ -4034,6 +4076,8 @@ window.__ModuleLoader__.load({
 			previewSideFor,
 			resolveResizedLeft,
 			resolveSlotChannel,
+			setPortalApi,
+			withBodyPortal,
 			HistoryOutlinePanelInner,
 			HistoryOutlineSlot,
 			HistoryOutlinePlaceholder,
